@@ -1,0 +1,36 @@
+/* desktop-app/onboarding.css: the first-run setup check card (onboarding.js). A floating card, not a dialog; sits under the
+   Settings / Saved data dialogs (z-index 2000) so they open over it. App tokens only. */
+.ob-card { position: fixed; right: 20px; bottom: 20px; width: 440px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); overflow-y: auto; z-index: 1900;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-top: 3px solid var(--accent-color); border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,0.55); font-size: 0.9rem; }
+.ob-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 12px 6px; position: relative; padding-right: 64px; }
+.ob-head b { font-size: 1rem; color: var(--accent-color); }
+.ob-sub { color: var(--text-secondary); font-size: 0.78rem; }
+.ob-x { position: absolute; top: 6px; width: 24px; height: 24px; padding: 0; border: none; background: none; color: var(--text-secondary); font-size: 1.15rem; line-height: 1; }
+.ob-x[data-ob="min"] { right: 32px; } .ob-x[data-ob="skip"] { right: 6px; }
+.ob-x:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+.ob-card.min .ob-body { display: none; }
+.ob-body { padding: 0 12px 10px; }
+.ob-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ob-step { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border-color); }
+.ob-ico { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+.ob-step.ok .ob-ico { background: rgba(34,197,94,0.2); color: var(--green-pos); }
+.ob-step.todo .ob-ico { background: rgba(250,204,21,0.18); color: var(--yellow-warn); }
+.ob-step.fail .ob-ico { background: rgba(239,68,68,0.2); color: var(--red-neg); }
+.ob-step.wait .ob-ico { animation: ob-pulse 1.1s ease-in-out infinite; }
+@keyframes ob-pulse { 50% { opacity: 0.35; } }
+.ob-main { flex: 1; min-width: 0; }
+.ob-t { font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
+.ob-opt { font-weight: 400; font-size: 0.72rem; color: var(--text-secondary); }
+.ob-st { margin-left: auto; font-weight: 500; font-size: 0.72rem; color: var(--text-secondary); }
+.ob-step.ok .ob-st { color: var(--green-pos); } .ob-step.todo .ob-st { color: var(--yellow-warn); } .ob-step.fail .ob-st { color: var(--red-neg); }
+.ob-x2 { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.45; margin-top: 2px; }
+.ob-form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.ob-in { flex: 1 1 140px; min-width: 0; padding: 4px 8px; font-size: 0.85rem; }
+.ob-form select { padding: 4px 6px; font-size: 0.85rem; }
+.ob-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.ob-b { padding: 3px 11px; font-size: 0.8rem; }
+.ob-b.main { border-color: var(--accent-color); color: var(--accent-color); }
+.ob-msg { min-height: 0; font-size: 0.78rem; color: var(--text-secondary); }
+.ob-msg:not(:empty) { padding: 4px 0 0; }
+.ob-foot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 4px; }
+.ob-hint { flex: 1; font-size: 0.74rem; color: var(--text-secondary); }

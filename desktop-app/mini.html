@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://ddragon.leagueoflegends.com https://*.r2.dev data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+    <title>DravenGap mini</title>
+    <style>
+        :root { --bg: #121212; --bg2: #1e1e1e; --border: #2c2c2c; --text: #e0e0e0; --muted: #a0a0a0; --accent: #60a5fa; --green: #22c55e; --red: #ef4444; --yellow: #facc15; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 system-ui, sans-serif; overflow: hidden; user-select: none; }
+        body { display: flex; flex-direction: column; border: 1px solid var(--border); }
+        .bar { -webkit-app-region: drag; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+        .bar img { width: 18px; height: 18px; border-radius: 50%; }
+        .title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bar button { -webkit-app-region: no-drag; background: none; border: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; cursor: pointer; }
+        .bar button:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+        .sub { padding: 4px 10px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .advice { margin: 6px 8px 0; padding: 5px 8px; border-radius: 6px; font-size: 12px; border-left: 3px solid var(--accent); background: rgba(96,165,250,0.08); }
+        .advice.go { border-left-color: var(--green); } .advice.warn { border-left-color: var(--yellow); }
+        .head, .row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 66px 46px; align-items: center; gap: 6px; padding: 0 8px; }
+        .aram .head, .aram .row { grid-template-columns: 26px minmax(0, 1fr) 30px 50px 40px; }
+        .head { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding-top: 6px; padding-bottom: 3px; }
+        .head span:nth-child(n+3) { text-align: right; }
+        .list { flex: 1; overflow-y: auto; }
+        .row { padding-top: 4px; padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; }
+        .row:hover { background: rgba(255,255,255,0.05); }
+        .row img { width: 26px; height: 26px; border-radius: 4px; background: #000; }
+        .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .name small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+        .name small.pos { color: var(--green); } .name small.neg { color: var(--red); }
+        .num { text-align: right; font-variant-numeric: tabular-nums; }
+        .wr { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+        .pos { color: var(--green); } .neg { color: var(--red); } .pp-high { color: var(--green); } .pp-mid { color: var(--yellow); } .pp-low { color: var(--red); }
+        .flag { color: var(--yellow); margin-left: 3px; }
+        .bar2 { position: relative; display: block; width: 58px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); }
+        .bar2 b { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(255,255,255,0.3); }
+        .bar2 i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: currentColor; opacity: .75; }
+        .tier { font-weight: 700; font-size: 11px; text-align: center; }
+        .src { font-size: 9px; text-transform: uppercase; color: var(--muted); margin-left: 4px; }
+        .src.current { color: var(--accent); }
+        .empty { padding: 18px 12px; color: var(--muted); text-align: center; }
+        .kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .kv span { color: var(--muted); font-size: 12px; } .kv b { text-align: right; font-variant-numeric: tabular-nums; }
+        .kv em { grid-column: 1 / -1; font-style: normal; color: var(--muted); font-size: 11px; text-align: right; }
+        .kv b.warn { color: var(--yellow); font-weight: 500; font-size: 12px; }
+        .foot { padding: 4px 10px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 6px; }
+        .foot button { -webkit-app-region: no-drag; background: none; border: none; color: var(--accent); padding: 0; cursor: pointer; font-size: 10px; }
+    </style>
+</head>
+<body>
+    <div class="bar"><img src="assets/dravengap.png" alt=""><span class="title" id="title">DravenGap</span>
+        <button id="close" title="Close the mini window" aria-label="Close">&times;</button></div>
+    <div class="sub" id="sub">Waiting for the main window…</div>
+    <div id="advice"></div>
+    <div class="head" id="head"></div>
+    <div class="list" id="list"><div class="empty">Waiting for the main window…</div></div>
+    <div class="foot"><span id="when"></span><button id="main" title="Bring the main window to the front">Open DravenGap</button></div>
+    <script src="mini.js"></script>
+</body>
+</html>

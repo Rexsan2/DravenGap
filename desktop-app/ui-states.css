@@ -1,0 +1,81 @@
+/* desktop-app/ui-states.css: shared loading / empty / error states (DD.ui in ui-states.js) and the compact density.
+   App tokens only (--bg-secondary, --text-secondary, --border-color, --yellow-warn, ...). */
+
+/* ---- loading / empty / error */
+.dg-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 16px; text-align: center; color: var(--text-secondary); }
+.dg-state.dg-loading { flex-direction: row; justify-content: center; gap: 10px; font-size: 0.9rem; }
+.dg-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-color); border-top-color: var(--accent-color); animation: dg-spin .8s linear infinite; flex: none; }
+@keyframes dg-spin { to { transform: rotate(360deg); } }
+.dg-skel { display: flex; flex-direction: column; gap: 8px; padding: 6px 4px; }
+.dg-skel i { display: block; height: 14px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: dg-shimmer 1.4s ease-in-out infinite; }
+@keyframes dg-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+.dg-state-ico svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.7; }
+.dg-state-t { font-weight: 600; font-size: 1rem; color: var(--text-primary); }
+.dg-state-h { font-size: 0.85rem; line-height: 1.5; max-width: 460px; }
+.dg-state-a { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.dg-state-btn { padding: 4px 12px; font-size: 0.82rem; }
+.dg-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-primary); }
+
+.dg-err { border: 1px solid rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.06); border-radius: 8px; margin: 8px 0; }
+.dg-err.warn { border-color: rgba(250, 204, 21, 0.45); background: rgba(250, 204, 21, 0.06); }
+.dg-err.warn .dg-state-ico { color: var(--yellow-warn); }
+.dg-err:not(.warn) .dg-state-ico { color: var(--red-neg); }
+.dg-err.compact { padding: 8px 10px; gap: 3px; margin: 4px 0; align-items: flex-start; text-align: left; }
+.dg-err.compact .dg-state-ico svg { width: 18px; height: 18px; }
+.dg-err.compact .dg-state-t { font-size: 0.85rem; }
+.dg-err.compact .dg-state-h { font-size: 0.78rem; }
+.dg-err.compact .dg-state-a { justify-content: flex-start; margin-top: 2px; }
+.dg-err.ready .dg-count { color: var(--green-pos); }
+
+.dg-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 5px 10px; margin: 0 0 8px; border-radius: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.dg-note span { flex: 1 1 auto; }
+.dg-note.warn { border: 1px solid rgba(250, 204, 21, 0.4); background: rgba(250, 204, 21, 0.07); }
+.dg-note .dg-state-btn { padding: 2px 9px; font-size: 0.78rem; }
+
+#scout-root .ms-card .dg-state.dg-loading { padding: 4px 0; justify-content: flex-start; font-size: 0.8rem; }
+#scout-root .ms-cards > .dg-state { grid-column: 1 / -1; }
+
+/* ---- Settings > Appearance */
+.appearance-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 6px 0; font-size: 0.9rem; }
+.appearance-row label { display: inline-flex; align-items: center; gap: 8px; }
+.appearance-row input[type="range"] { width: 110px; accent-color: var(--accent-color); cursor: pointer; }
+#ui-scale-label { min-width: 3.2em; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+
+/* ---- compact density: tighter paddings and row heights in the draft table, Profile lists, tier list and multi-search.
+   The class sits on <body> (and on <html> from the head script, so it is there before the first paint). */
+.density-compact .header { margin-bottom: 10px; gap: 6px; }
+.density-compact .header-title { font-size: 1.5rem; gap: 10px; }
+.density-compact .header-logo { height: 32px; width: 32px; }
+.density-compact #results { padding: 8px 10px; }
+/* draft recommendations */
+.density-compact #recommendation-header { padding: 0 8px 2px 8px; }
+.density-compact #recommendation-list li { padding: 3px 8px; gap: 8px; }
+.density-compact .rec-cell-champ { gap: 8px; }
+.density-compact .rec-img { width: 28px; height: 28px; }
+/* Profile */
+.density-compact #profile-root .pf-wrap { padding: 6px 12px 28px; }
+.density-compact #profile-root .pf-top { margin-bottom: 6px; }
+.density-compact #profile-root .pf-card { padding: 6px 10px; }
+.density-compact #profile-root .pf-card-h { margin-bottom: 4px; }
+.density-compact #profile-root .pf-left { gap: 6px; }
+.density-compact #profile-root .pf-tabs { margin: 8px 0 6px; }
+.density-compact #profile-root .pf-tab { padding: 5px 12px; }
+.density-compact #profile-root .pf-match { margin-bottom: 3px; }
+.density-compact #profile-root .pf-mrow { padding: 3px 8px; gap: 6px; }
+.density-compact #profile-root .pf-champ { width: 38px; height: 38px; }
+.density-compact #profile-root .pf-cs, .density-compact #profile-root .pf-ms { padding: 1px 0; }
+.density-compact #profile-root .pf-ps { padding: 1px 0; }
+.density-compact #profile-root .pf-sb td { padding: 1px 6px; }
+.density-compact #profile-root .pf-more { padding: 5px; margin-top: 3px; }
+/* tier list */
+.density-compact #tierlist-root .tl-wrap { gap: 6px; }
+.density-compact #tierlist-root .tl-table th, .density-compact #tierlist-root .tl-table td { padding: 1px 8px; }
+.density-compact #tierlist-root .tl-ico { width: 20px; height: 20px; margin-right: 6px; }
+.density-compact #tierlist-root .tl-mover { padding: 2px 6px; }
+.density-compact #tierlist-root .tl-tab, .density-compact #tierlist-root .tl-role { padding: 2px 9px; }
+/* multi-search */
+.density-compact #scout-root .ms-wrap { gap: 6px; }
+.density-compact #scout-root .ms-card { padding: 6px 9px; gap: 3px; }
+.density-compact #scout-root .ms-cards { gap: 6px; }
+.density-compact .dg-state { padding: 16px 12px; }

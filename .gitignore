@@ -40,3 +40,7 @@ settings.json
 Thumbs.db
 desktop-app/dist/DraftDiff Setup 4.5.0.exe
 desktop-app/dist/DraftDiff Setup 4.5.1.exe
+
+# Personal builds: the built-in key and the packed data never go into git (tools/build-personal.js)
+/desktop-app/.personal/
+/desktop-app/dist/

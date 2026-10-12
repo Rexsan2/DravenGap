@@ -1,0 +1,5 @@
+# Core harness (collect_matches.py, evaluate.py, simulate.py, draftdiff_model.py)
+# uses the Python 3.8+ standard library only. No third-party packages are required.
+#
+# Optional:
+matplotlib>=3.5   # calibration plot PNG (evaluate.py --plot)

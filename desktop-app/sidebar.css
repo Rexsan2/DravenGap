@@ -1,0 +1,25 @@
+/* desktop-app/sidebar.css: left sidebar navigation (sidebar.js). App tokens only. */
+body { justify-content: flex-start; gap: 14px; }
+.app-container { margin: 0 auto; min-width: 0; }
+
+.sidebar { flex: none; width: 172px; height: calc(100vh - 40px); display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; overflow-y: auto; overflow-x: hidden;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; transition: width .15s ease; scrollbar-width: none; }
+.sidebar::-webkit-scrollbar { display: none; }
+.sb-item { position: relative; display: flex; align-items: center; gap: 11px; width: 100%; padding: 8px 10px; border: none; border-radius: 7px; background: transparent;
+    color: var(--text-secondary); font-size: 0.9rem; font-weight: 600; text-align: left; white-space: nowrap; flex: none; }
+.sb-item:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+.sb-item:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.sb-item.active { background: rgba(96,165,250,0.16); color: var(--accent-color); }
+.sb-item svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sb-label { overflow: hidden; text-overflow: ellipsis; }
+.sb-dot { position: absolute; left: 24px; top: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--red-neg); box-shadow: 0 0 0 2px var(--bg-secondary); display: none; animation: pulse 1.5s infinite; }
+.sb-item.live-on .sb-dot { display: block; }
+.sb-item.live-on { color: var(--text-primary); }
+.sb-grow { flex: 1 1 auto; min-height: 10px; }
+.sb-collapse { margin-top: 4px; border-top: 1px solid var(--border-color); border-radius: 0 0 7px 7px; padding-top: 10px; }
+
+body.sb-collapsed .sidebar { width: 50px; }
+body.sb-collapsed .sb-label { display: none; }
+body.sb-collapsed .sb-item { justify-content: center; padding: 9px 0; }
+body.sb-collapsed .sb-dot { left: 50%; margin-left: 4px; }
+body.sb-collapsed .sb-collapse svg { transform: rotate(180deg); }

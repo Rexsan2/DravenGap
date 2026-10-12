@@ -1,0 +1,82 @@
+/* desktop-app/aram-view.css: styles for #aram-root (ARAM Mayhem mode). Uses the app tokens. */
+#aram-root { color: var(--text-primary); }
+#aram-root .aram-wrap { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; padding: 4px 2px; box-sizing: border-box; }
+#aram-root .aram-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; }
+#aram-root .aram-status { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#aram-root .aram-meta { color: var(--text-secondary); display: flex; align-items: center; gap: 10px; }
+#aram-root .aram-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+#aram-root .aram-dot.on { background: var(--green-pos); } #aram-root .aram-dot.warn { background: var(--yellow-warn); } #aram-root .aram-dot.off { background: var(--text-secondary); }
+#aram-root .aram-stale { color: var(--yellow-warn); }
+#aram-root .aram-link { color: var(--accent-color); text-decoration: none; } #aram-root .aram-link:hover { text-decoration: underline; }
+#aram-root .aram-btn { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem; }
+#aram-root .aram-btn:hover { border-color: var(--accent-color); }
+
+#aram-root .aram-cols { display: grid; grid-template-columns: minmax(380px, 5fr) minmax(480px, 7fr); gap: 10px; flex: 1; min-height: 0; }
+#aram-root .aram-left, #aram-root .aram-right { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; overflow-y: auto; min-height: 0; max-height: calc(100vh - 150px); }
+#aram-root h2 { margin: 0; font-size: 1.15rem; } #aram-root h3 { margin: 16px 0 6px; font-size: 0.95rem; } #aram-root h4 { margin: 8px 0 4px; font-size: 0.78rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+#aram-root .aram-hint { font-weight: normal; color: var(--text-secondary); font-size: 0.75rem; margin-left: 6px; }
+#aram-root .aram-empty { color: var(--text-secondary); padding: 18px 8px; text-align: center; font-size: 0.9rem; }
+#aram-root .aram-empty.small { padding: 8px; } #aram-root .aram-empty.big { padding: 80px 20px; }
+#aram-root .aram-note { color: var(--text-secondary); font-size: 0.78rem; padding: 8px 4px; }
+
+#aram-root .aram-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+#aram-root .aram-tab { flex: 1; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 0.82rem; }
+#aram-root .aram-tab.on { color: var(--text-primary); border-color: var(--accent-color); }
+#aram-root .aram-tabs.sm .aram-tab { flex: none; padding: 4px 12px; }
+#aram-root .aram-tab.r-prismatic.on { border-color: #c084fc; } #aram-root .aram-tab.r-gold.on { border-color: var(--yellow-warn); } #aram-root .aram-tab.r-silver.on { border-color: #cbd5e1; }
+#aram-root .aram-search { width: 100%; box-sizing: border-box; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; }
+
+#aram-root .aram-listhead { display: grid; grid-template-columns: 1fr 40px 62px 52px; gap: 6px; color: var(--text-secondary); font-size: 0.7rem; text-transform: uppercase; padding: 0 6px 4px; }
+#aram-root .aram-listhead.aug { grid-template-columns: 1fr 70px 62px 62px; }
+#aram-root .aram-listhead span:not(:first-child) { text-align: right; }
+#aram-root .aram-row { display: grid; grid-template-columns: 36px 1fr 40px 62px 52px; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; position: relative; }
+#aram-root .aram-row:hover { background: var(--bg-primary); } #aram-root .aram-row.sel { border-color: var(--accent-color); background: var(--bg-primary); }
+#aram-root .aram-row .aram-x { position: absolute; right: -2px; top: -2px; background: var(--bg-primary); color: var(--red-neg); border: 1px solid var(--border-color); border-radius: 50%; width: 16px; height: 16px; line-height: 12px; padding: 0; cursor: pointer; font-size: 12px; }
+#aram-root .aram-champ { width: 34px; height: 34px; border-radius: 6px; } #aram-root .aram-champ.lg { width: 52px; height: 52px; border-radius: 8px; }
+#aram-root .aram-name { font-size: 0.9rem; min-width: 0; } #aram-root .aram-sub { color: var(--text-secondary); font-size: 0.72rem; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; font-weight: normal; }
+#aram-root .aram-role { text-transform: capitalize; }
+#aram-root .aram-src { border-radius: 4px; padding: 0 5px; font-size: 0.66rem; text-transform: uppercase; border: 1px solid var(--border-color); }
+#aram-root .aram-src.current { color: var(--green-pos); border-color: var(--green-pos); } #aram-root .aram-src.bench { color: var(--accent-color); border-color: var(--accent-color); }
+#aram-root .aram-src.teammate { color: var(--yellow-warn); border-color: var(--yellow-warn); } #aram-root .aram-src.manual { color: var(--text-secondary); }
+#aram-root .aram-tier { text-align: center; font-weight: 700; font-size: 0.78rem; border-radius: 4px; padding: 1px 4px; background: var(--bg-primary); border: 1px solid var(--border-color); }
+#aram-root .aram-tier.t-sp { color: #f472b6; border-color: #f472b6; } #aram-root .aram-tier.t-s { color: var(--yellow-warn); border-color: var(--yellow-warn); } #aram-root .aram-tier.t-a { color: var(--green-pos); border-color: var(--green-pos); }
+#aram-root .aram-tier.t-b { color: var(--accent-color); } #aram-root .aram-tier.t-c { color: var(--text-secondary); }
+#aram-root .aram-bhead .aram-tier { display: inline-block; }
+#aram-root .aram-wr { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+#aram-root .aram-delta { text-align: right; font-variant-numeric: tabular-nums; font-size: 0.82rem; min-width: 48px; }
+#aram-root .aram-delta.pos { color: var(--green-pos); } #aram-root .aram-delta.neg { color: var(--red-neg); } #aram-root .aram-delta.flat { color: var(--text-secondary); }
+
+#aram-root .aram-bhead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+#aram-root .aram-statline { color: var(--text-secondary); font-size: 0.8rem; padding: 4px 0 6px; line-height: 1.5; }
+#aram-root .aram-statline b { color: var(--text-primary); } #aram-root .aram-bal { color: var(--yellow-warn); }
+#aram-root .aram-arow { display: grid; grid-template-columns: 34px 1fr 70px 62px 62px; gap: 6px; align-items: center; padding: 3px 6px; border-radius: 6px; }
+#aram-root .aram-arow:nth-child(odd) { background: rgba(255,255,255,0.025); }
+#aram-root .aram-arow.low, #aram-root .aram-irow.low { opacity: 0.45; }
+#aram-root .aram-aug { width: 30px; height: 30px; border-radius: 6px; display: inline-block; }
+#aram-root .aram-aname { font-size: 0.88rem; } #aram-root .aram-app { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: 0.82rem; }
+#aram-root .aram-isec { margin-bottom: 4px; }
+#aram-root .aram-irow { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; }
+#aram-root .aram-irow:nth-child(even) { background: rgba(255,255,255,0.025); }
+#aram-root .aram-grow { flex: 1; }
+#aram-root .aram-item { position: relative; display: inline-block; width: 32px; height: 32px; border-radius: 5px; overflow: hidden; background: var(--bg-primary); border: 1px solid var(--border-color); flex: none; }
+#aram-root .aram-item img { width: 100%; height: 100%; display: block; }
+#aram-root .aram-item b { position: absolute; right: 1px; bottom: 0; font-size: 0.65rem; text-shadow: 0 0 3px #000; }
+#aram-root .aram-item-missing { font-size: 0.6rem; color: var(--text-secondary); padding: 2px; display: block; }
+#aram-root .aram-chip { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 5px; padding: 3px 8px; font-size: 0.8rem; }
+#aram-root .aram-arrow { color: var(--text-secondary); font-style: normal; margin: 0 -2px; }
+#aram-root .aram-pick, #aram-root .aram-games { color: var(--text-secondary); font-size: 0.75rem; white-space: nowrap; }
+#aram-root .aram-foot { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.78rem; }
+#aram-root .aram-iname { color: var(--text-secondary); font-size: 0.78rem; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#aram-root .aram-irow { min-width: 0; }
+
+/* reroll / bench advice and send-to-client (aram-view.js) */
+#aram-root .aram-advice { border: 1px solid var(--border-color); border-left: 4px solid var(--text-secondary); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: rgba(255,255,255,0.03); }
+#aram-root .aram-advice.go { border-left-color: var(--green-pos); }
+#aram-root .aram-advice.warn { border-left-color: var(--yellow-warn); }
+#aram-root .aram-advice.ok { border-left-color: var(--accent-color); }
+#aram-root .aram-advice-main { font-weight: 600; font-size: 0.95rem; }
+#aram-root .aram-advice-sub { color: var(--text-secondary); font-size: 0.8rem; margin-top: 2px; }
+#aram-root .aram-apply { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px 10px; margin: 8px 0; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(96,165,250,0.06); }
+#aram-root .aram-apply-t { font-weight: 600; font-size: 0.85rem; }
+#aram-root .aram-apply-msg { flex-basis: 100%; font-size: 0.78rem; color: var(--text-secondary); }
+#aram-root .aram-apply-msg:empty { display: none; }

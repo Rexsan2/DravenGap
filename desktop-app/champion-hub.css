@@ -1,0 +1,60 @@
+/* desktop-app/champion-hub.css: the champion hub (champion-hub.js), #champion-root only. App tokens only. */
+#champion-root { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+#champion-root .ch-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 0; height: 100%; }
+#champion-root .ch-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#champion-root .ch-search { width: 220px; }
+#champion-root .ch-recent { display: flex; gap: 6px; flex-wrap: wrap; }
+#champion-root .ch-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 4px; font-size: 0.8rem; border-radius: 999px; }
+#champion-root .ch-chip-img { width: 20px; height: 20px; border-radius: 50%; }
+#champion-root .ch-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+#champion-root .ch-img { width: 64px; height: 64px; border-radius: 10px; }
+#champion-root .ch-name { flex: 1 1 auto; min-width: 0; }
+#champion-root .ch-name h2 { margin: 0 0 6px; font-size: 1.5rem; }
+#champion-root .ch-title { font-size: 0.9rem; font-weight: 400; color: var(--text-secondary); text-transform: capitalize; }
+#champion-root .ch-roles { display: flex; gap: 6px; flex-wrap: wrap; }
+#champion-root .ch-role { padding: 4px 10px; font-size: 0.85rem; background: none; color: var(--text-secondary); }
+#champion-root .ch-role span { font-size: 0.72rem; opacity: 0.8; margin-left: 3px; }
+#champion-root .ch-role.on { color: var(--accent-color); border-color: var(--accent-color); background: rgba(96,165,250,0.1); }
+#champion-root .ch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#champion-root .ch-btn { padding: 5px 12px; font-size: 0.85rem; }
+#champion-root .ch-tabs { display: flex; border-bottom: 1px solid var(--border-color); flex-wrap: wrap; }
+#champion-root .ch-tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--text-secondary); font-size: 0.95rem; }
+#champion-root .ch-tab.on { color: var(--accent-color); border-bottom-color: var(--accent-color); }
+#champion-root .ch-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 10px; }
+#champion-root .ch-empty { padding: 26px 10px; color: var(--text-secondary); line-height: 1.5; max-width: 640px; }
+#champion-root .ch-empty h3 { color: var(--text-primary); margin: 0 0 8px; }
+#champion-root .ch-muted { color: var(--text-secondary); font-size: 0.8rem; font-weight: 400; }
+#champion-root .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+#champion-root .ch-cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+#champion-root .ch-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+#champion-root .ch-card.ch-wide { grid-column: span 2; }
+#champion-root .ch-card-h { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
+#champion-root .ch-card-h.ch-gap { margin-top: 10px; }
+#champion-root .ch-big { font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+#champion-root .ch-kv { display: flex; justify-content: space-between; gap: 10px; font-size: 0.85rem; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+#champion-root .ch-kv span { color: var(--text-secondary); }
+#champion-root .ch-foot { margin-top: 6px; }
+#champion-root .ch-mini { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+#champion-root .ch-mini-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#champion-root .ch-ico { width: 22px; height: 22px; border-radius: 4px; vertical-align: middle; margin-right: 6px; }
+#champion-root .ch-click { cursor: pointer; }
+#champion-root .ch-click:hover { background: rgba(255,255,255,0.04); }
+#champion-root .ch-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 4px 0 10px; font-size: 0.85rem; color: var(--text-secondary); }
+#champion-root .ch-controls label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+#champion-root .ch-controls select { padding: 4px 8px; font-size: 0.85rem; }
+#champion-root .ch-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+#champion-root .ch-table th, #champion-root .ch-table td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+#champion-root .ch-table th { color: var(--text-secondary); font-weight: 500; font-size: 0.78rem; }
+#champion-root .ch-table .l { text-align: left; }
+#champion-root .ch-table.compact td, #champion-root .ch-table.compact th { padding: 3px 4px; }
+#champion-root .ch-note { font-size: 0.78rem; color: var(--text-secondary); margin: 8px 0 0; line-height: 1.5; }
+#champion-root .ch-tag { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; color: var(--accent-color); border: 1px solid rgba(96,165,250,0.5); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+#champion-root .ch-items { display: flex; flex-wrap: wrap; gap: 6px; }
+#champion-root .ch-item { display: inline-flex; flex-direction: column; align-items: center; font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+#champion-root .ch-item img { width: 34px; height: 34px; border-radius: 5px; background: #000; }
+#champion-root .ch-item em { font-style: normal; }
+#champion-root .ch-game { display: grid; grid-template-columns: 44px 70px 54px 1fr auto; gap: 8px; align-items: center; font-size: 0.82rem; padding: 3px 6px; border-left: 3px solid transparent; }
+#champion-root .ch-game.w { border-left-color: var(--accent-color); } #champion-root .ch-game.l { border-left-color: var(--red-neg); }
+#champion-root .ch-badge { font-style: normal; font-size: 0.68rem; font-weight: 700; padding: 0 5px; border-radius: 6px; background: #7c3aed; color: #fff; }
+#champion-root .coach { margin-top: 12px; }
+@media (max-width: 1100px) { #champion-root .ch-card.ch-wide { grid-column: auto; } }
