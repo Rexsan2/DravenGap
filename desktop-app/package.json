@@ -1,6 +1,6 @@
 {
   "name": "dravengap",
-  "version": "4.5.1",
+  "version": "1.0.0",
   "description": "DravenGap: League of Legends draft, builds and profiles (a fork of DraftDiff by Lydig).",
   "main": "main.js",
   "scripts": {
