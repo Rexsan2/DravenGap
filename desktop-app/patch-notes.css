@@ -1,0 +1,30 @@
+/* Buff / nerf / adjust marks (patch-notes.js) */
+.pn-mark { display: inline-block; margin-left: 4px; font-weight: 700; font-size: 0.75rem; line-height: 1; cursor: help; vertical-align: 1px; }
+.pn-buff { color: var(--green-pos); }
+.pn-nerf { color: var(--red-neg); }
+.pn-adjust { color: var(--accent-color); }
+/* champion grid: a small badge in the bottom-left corner of the portrait */
+.champion-tile > .pn-mark { position: absolute; left: 2px; bottom: 2px; margin: 0; padding: 1px 3px; border-radius: 3px; background: rgba(0, 0, 0, 0.75); font-size: 0.7rem; }
+.pn-tip { width: 360px; font-size: 0.82rem; line-height: 1.4; }
+.pn-tip h4 { margin: 0 0 6px; font-size: 0.95rem; }
+.pn-tip .pn-ctx { margin: 0 0 6px; color: var(--text-secondary); font-style: italic; }
+.pn-tip ul { margin: 0 0 6px; padding-left: 16px; }
+.pn-tip li { margin: 2px 0; }
+.pn-tip li.pn-up::marker { color: var(--green-pos); }
+.pn-tip li.pn-down::marker { color: var(--red-neg); }
+.pn-tip .pn-sec { color: var(--text-secondary); font-size: 0.75rem; }
+.pn-tip p.pn-sec { margin: 4px 0 0; }
+/* patch day card (patch-day.js) */
+.pd-back { position: fixed; inset: 0; z-index: 900; display: none; align-items: flex-start; justify-content: center; padding-top: 8vh; background: rgba(0, 0, 0, 0.45); }
+.pd-card { width: min(560px, calc(100vw - 32px)); max-height: 80vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.pd-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 1.05rem; }
+.pd-x { background: none; border: 0; font-size: 1.3rem; cursor: pointer; color: var(--text-secondary); }
+.pd-row { display: flex; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border-color); cursor: pointer; }
+.pd-row:hover { background: var(--bg-primary); }
+.pd-row img { width: 40px; height: 40px; border-radius: 6px; flex-shrink: 0; }
+.pd-txt { font-size: 0.86rem; min-width: 0; }
+.pd-txt ul { margin: 4px 0 0; padding-left: 16px; }
+.pd-txt li.pn-up::marker { color: var(--green-pos); } .pd-txt li.pn-down::marker { color: var(--red-neg); }
+.pd-m { color: var(--text-secondary); font-size: 0.8rem; }
+.pd-foot { margin-top: 10px; }
+.pd-foot a { color: var(--accent-color); }

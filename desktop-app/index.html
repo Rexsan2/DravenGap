@@ -25,6 +25,7 @@
         body[data-view="builds"] .sr-only-ctl.builds-ctl { display: flex !important; } /* Builds view: Time Period picks its patches */
         body[data-view="builds"] .builds-ctl .rank-group { display: none; }              /* Coachless is Emerald+ only */
         body[data-view="tierlist"] .sr-only-ctl.builds-ctl { display: flex !important; } /* the tier list follows Time Period and Rank */
+        body[data-view="champion"] .sr-only-ctl.builds-ctl, body[data-view="premades"] .sr-only-ctl.builds-ctl { display: flex !important; } /* champion / matchup pages and Premades too */
         #tierlist-root, #scout-root { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
         #builds-root { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
         #builds-root #builds-view { padding-top: 10px; }
@@ -71,6 +72,8 @@
         #connector-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
         .team-panel { width: 150px; display: flex; flex-direction: column; gap: 10px; }
         .team-panel h2 { text-align: center; margin: 0 0 10px 0; color: var(--text-secondary); order: -1; }
+        .team-panel h2 .team-clear { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; margin-left: 6px; vertical-align: 3px; opacity: 0.75; }
+        .team-panel h2 .team-clear:hover { opacity: 1; }
         .slot-tag { position: absolute; top: 3px; left: 4px; z-index: 6; padding: 0 5px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
             background: rgba(15, 23, 42, 0.75); color: var(--text-secondary); pointer-events: none; }
         .slot-num { color: var(--text-primary); font-weight: 700; }
@@ -142,6 +145,8 @@
             transition: filter 0.2s, opacity 0.2s, background-color 0.2s;
         }
         #recommendation-list li:hover { background-color: #252525; }
+        #recommendation-list li.rec-hint { display: block; color: var(--text-secondary); font-size: 0.88rem; padding: 14px 10px; cursor: default; }
+        #recommendation-list li.rec-hint:hover { background-color: transparent; }
 
         .rec-cell-champ { display: flex; align-items: center; gap: 10px; }
         .rec-cell-stat { text-align: right; font-variant-numeric: tabular-nums; }
@@ -265,6 +270,16 @@
         .link-btn { background: none; border: none; padding: 0; color: var(--text-secondary); font-size: 0.75rem; text-decoration: underline dotted; cursor: pointer; }
         .link-btn:hover { color: var(--accent-color); background: none; }
         .trend-mark { font-size: 0.65rem; margin-left: 2px; vertical-align: 1px; }
+        .rec-card { margin: 6px 0 8px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
+        .rec-card .rc-h { font-weight: 700; margin-bottom: 6px; font-size: 0.9rem; }
+        .rec-card .rc-m { color: var(--text-secondary); font-size: 0.75rem; font-weight: 400; }
+        .rec-card .rc-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .rec-card .rc-pick { display: flex; align-items: center; gap: 8px; flex: 1 1 180px; min-width: 0; padding: 6px 8px; text-align: left; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; color: var(--text-primary); }
+        .rec-card .rc-pick:hover { border-color: var(--accent-color); }
+        .rec-card .rc-pick img { width: 34px; height: 34px; border-radius: 5px; flex-shrink: 0; }
+        .rec-card .rc-txt { font-size: 0.85rem; min-width: 0; }
+        .rec-card .rc-why { color: var(--text-secondary); font-size: 0.75rem; }
+        .rec-card .rc-alt { border-style: dashed; }
         .trend-mark.up { color: var(--green-pos); } .trend-mark.down { color: var(--red-neg); }
         .pool-note { color: var(--text-secondary); font-size: 0.75rem; }
         .why-panel { grid-column: 1 / -1; margin: 4px 0 2px; padding: 8px 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 6px; cursor: default; }
@@ -441,6 +456,8 @@
     </style>
     <link rel="stylesheet" href="profile-view.css"> <!-- Profile view styles (owned by profile-view.js) -->
     <link rel="stylesheet" href="aram-view.css">    <!-- ARAM Mayhem view styles (owned by aram-view.js) -->
+    <link rel="stylesheet" href="patch-notes.css">
+    <link rel="stylesheet" href="premades-view.css"> <!-- Premades view (premades-view.js) -->  <!-- buff / nerf / adjust marks (patch-notes.js) -->
     <link rel="stylesheet" href="arena-view.css">   <!-- Arena view styles (owned by arena-view.js) -->
     <link rel="stylesheet" href="app-shell.css"> <!-- palette + toasts (app-shell.js) -->
     <link rel="stylesheet" href="glossary.css"> <!-- "?" chips, definitions, data-source chips (glossary.js) -->
@@ -450,6 +467,8 @@
     <link rel="stylesheet" href="dodgeball-view.css"> <!-- Mundo Dodgeball styles (owned by dodgeball-view.js) -->
     <link rel="stylesheet" href="ui-states.css"> <!-- shared loading / empty / error states, compact density (ui-states.js) -->
     <link rel="stylesheet" href="onboarding.css"> <!-- first-run setup card (onboarding.js) -->
+    <script src="patch-notes.js"></script>
+    <script src="background-settings.js" defer></script> <!-- tray / Start with Windows checkboxes (tray-main.js) --> <!-- buff / nerf / adjust marks from the patch notes (DDPatchNotes) -->
     <script src="seed-import.js"></script> <!-- personal build: packed data -> IndexedDB on first start (DDSeed) -->
     <script>
         // Density and UI scale from the last run, applied before the first paint (ui-states.js keeps them in sync with settings.json)
@@ -483,7 +502,7 @@
                     <li>The <strong>game flow bar</strong> under the header follows the client: <strong>Lobby › Champion select › In game › Review</strong>. The dots show where you are (filled = done, big = now). The card shows your lane, your pick and your lane opponent (after a game: result, K/D/A and length). Each step has one filled button (suggest for your lane, <strong>Send to client</strong>, live game, review the game) and a few quiet ones (bans, scout the lobby, game plan, build vs your opponent); Tier list and Multi-search sit in the <strong>⋯</strong> menu when the window is narrow, and below about 1100 px the buttons shrink to icons. On the right: today's wins and losses, the LP change and a dot per game (click it for the list).</li>
                     <li><strong>Back / forward</strong>: ‹ › at the left of the bar, <b>Alt+←</b> / <b>Alt+→</b> or the mouse's side buttons step through the views you opened, with the champion, opponent and tab you had.</li>
                     <li><strong>Right-click any champion picture</strong> (draft, recommendations, Profile, live game, tier list, champion pages…) for its page, its builds, its builds against the lane opponent, or its ARAM Mayhem or Arena build.</li>
-                    <li>The <strong>sidebar</strong> on the left opens every view: Draft, ARAM Mayhem, Arena, Tier list, Builds, Champions, Profile, <strong>Live game</strong> (a red dot shows while you are in a game), Multi-search and Dodgeball. At the bottom: the mini window, the Glossary, this help and <strong>Settings</strong>. <strong>Collapse</strong> shrinks it to icons (it starts that way on smaller windows).</li>
+                    <li>The <strong>sidebar</strong> on the left opens every view: Draft, ARAM Mayhem, Arena, Tier list, Builds, Champions, Profile, <strong>Live game</strong> (a red dot shows while you are in a game), Multi-search, <strong>Premades</strong> (the players you queue with: your record, best and never-tried champion pairs; click a pair for its details; tick up to 4 friends to plan a 2-5 stack with the best champion combos) and Dodgeball. Closing the window keeps DravenGap in the tray (Settings › Automation). At the bottom: the mini window, the Glossary, this help and <strong>Settings</strong>. <strong>Collapse</strong> shrinks it to icons (it starts that way on smaller windows).</li>
                     <li><strong>Ctrl+K</strong> (or Ctrl+P) searches everything: champions (their page, builds or ARAM build), views and tabs, and Riot IDs typed as <code>Name#TAG</code>.</li>
                     <li>Draft keys: <b>1</b>–<b>5</b> suggest for your Top…Support, <b>Shift+1</b>–<b>5</b> for the enemy, <b>R</b> Recommendations, <b>A</b> Analysis, <b>B</b> Bans, <b>D</b> Duo, <b>?</b> lists the keys, <b>Esc</b> closes things. Keys are off while you type.</li>
                     <li><strong>Follow my game</strong> (Settings › Automation, on by default) switches views with the client: champion select opens the Draft (or ARAM Mayhem / Arena for those queues), a game in progress opens your live game (ARAM Mayhem and Arena stay on their own view), the end of a game opens your Profile. A click on another view always wins until the next phase.</li>
@@ -507,7 +526,7 @@
                     </li>
                     <li>On a row: <strong>why</strong> opens the breakdown (champion strength, every pairing with how much of it is kept, the draft effect, blind-pick risk, you) and a link to the champion's page. <strong>⚔</strong> opens its builds against your lane opponent. <strong>⚠</strong> means a common counter costs 3+ points while your lane opponent is still unknown.</li>
                     <li><strong>Details</strong> adds Rank, the raw Total Δ with its Lane / Ally / Enemy split, and Role Freq. Click any header to sort.</li>
-                    <li><strong>Filters</strong>: Min Base WR %, Min Role Freq %, Min Games and the search box. <strong>Favorites</strong> shows only starred champions (right-click a champion in the grid). <strong>My pool</strong> keeps only champions you play (3+ games in your history or 20,000+ mastery). <strong>Hovers</strong> counts champions teammates are only hovering.</li>
+                    <li><strong>Filters</strong>: Min Base WR %, Min Role Freq %, Min Games and the search box. The search is for finding one champion: it clears itself when you pick from the list or choose another slot, and if it hides every row the list says so (with <strong>Clear search</strong>). No slot chosen yet (no client, or after a reset)? The list says to press the 💡 / SUGGEST of a slot. <strong>Favorites</strong> shows only starred champions (right-click a champion in the grid). <strong>My pool</strong> keeps only champions you play (3+ games in your history or 20,000+ mastery). <strong>Hovers</strong> counts champions teammates are only hovering.</li>
                     <li><strong>Borrow strength from broader data</strong> (on by default): matchups with few games lean on a bigger dataset instead of on zero.</li>
                     <li>In champion select both teams are shown <strong>in pick order</strong> (#1 picks first; you are outlined in yellow). Each slot's tag is the lane the model uses: on your team that is the lane of the player who picked the champion, on the enemy team it is a guess from how often each champion is played in each role. Move a pick to correct it.</li>
                     <li><strong>Moving picks</strong>: click a filled slot, then another slot of the same team, to swap them. A swap <strong>locks</strong> both slots (🔒) so Live Tracking keeps your order instead of guessing roles again; click the 🔒 to hand a slot back to the automatic guess. A new game clears the locks.</li>
@@ -520,7 +539,7 @@
                     <li><strong>What if</strong>: in Draft Analysis press <strong>Pin this draft</strong>, then change any pick. The verdict shows the win chance before and after, the points it moved and which slot changed. <strong>Back to pinned</strong> puts the pinned picks back.</li>
                     <li><strong>Copy as image</strong> (Draft Analysis, and the post-game card in Profile) puts that part of the window on the clipboard as a picture: paste it in Discord. Only what is on screen is copied.</li>
                     <li><strong>Practice draft</strong> (Ctrl+K): Live Tracking off and an empty board, so you can draft both sides by hand without the client changing anything.</li>
-                    <li><strong>Reset Draft</strong> clears all picks.</li>
+                    <li><strong>Reset Draft</strong> clears all picks; <strong>Clear</strong> next to a team's name clears that team; right-click a champion on the board › <strong>Remove</strong> takes out just that one.</li>
                 </ul>
             </details>
 
@@ -574,7 +593,7 @@
                     <li>In champion select, <strong>Recommended picks</strong> lists the champions you can play now (yours, the bench and, when the client reports them, teammates') ranked by Mayhem win rate, and your champion's build opens by itself. The box at the top says whether to <strong>reroll</strong> or <strong>swap from the bench</strong>.</li>
                     <li>Before the bench opens your own champion is already shown (the client sometimes reports it a moment late), with its tier, items and augments, and the advice reads <strong>Bench opens soon</strong>: keep it, or reroll if it is below the middle of the tier list and you have rerolls left.</li>
                     <li>Outside champion select use <strong>Full tier list</strong>, or add champions by hand under <strong>Recommended picks</strong>.</li>
-                    <li>Click a champion for its <strong>augments</strong> (Prismatic, Gold, Silver: win rate and how often they appear) and items. Items come from LoLalytics regular ARAM, <strong>not</strong> Mayhem; augments and Mayhem win rates come from arammayhem.com.</li>
+                    <li>Click a champion for its <strong>augments</strong> (Prismatic, Gold, Silver) and items. arammayhem.com stopped publishing augment win rates per champion, so augments are listed in its recommended order for that champion with how often each appears and its <strong>tier</strong> (e.g. <em>A #18</em> among its rarity, and overall); if the site brings win rates back, the WR column returns by itself. Items come from LoLalytics regular ARAM, <strong>not</strong> Mayhem; augments and Mayhem win rates come from arammayhem.com.</li>
                     <li><strong>Send to client</strong> saves the item set for Howling Abyss and sets the spells. <strong>Refresh</strong> fetches again (cached on this PC for about 6 hours).</li>
                 </ul>
             </details>
@@ -601,6 +620,8 @@
                     <li>Insights also shows <strong>Strengths and areas to improve</strong> (your stats minus your lane opponent's in the same games, only gaps beyond noise are marked), your <strong>learning curve</strong> (win rate by game number on a champion) and, on your own profile, your <strong>LP history</strong>: DravenGap reads your LP from the client before and after every ranked game, dodges included.</li>
                     <li>Right after a game, a <strong>post-game card</strong> compares your KDA, CS and DD Score with your usual and checks the draft. <strong>Load season history</strong> saves more of your games (it also feeds the You column).</li>
                     <li><strong>Review</strong> (a match's tab, or <strong>Review this game</strong> on the post-game card): you against your lane opponent at 10, 15 and 20 minutes (gold, CS, XP), the three-minute stretches where your team's gold lead moved most, your deaths and kills on the map, and your finished items against the saved Coachless data for that champion and lane ("strong pick" = PP 90%+, plus strong items you did not buy). It reads the match timeline once and keeps it.</li>
+                    <li><strong>The map</strong> (Review): ✕ your deaths, ● your kills, small dots assists. Hover a mark for when it happened and who was involved; with the replay available, a click on it jumps the replay there.</li>
+                    <li><strong>Replay</strong> (Review, your own games, League client open): <strong>Open the replay</strong> downloads it from the client if needed and opens it; <strong>Watch from 12:34</strong> next to each death jumps to 15 seconds before it and follows your champion. Jumping needs the game's Replay API once: <strong>Turn on replay control</strong> sets <code>EnableReplayApi=1</code> in the game's settings file (a backup is kept). The client only keeps replays of the current patch.</li>
                     <li>After each game your profile refreshes by itself: DravenGap asks Riot for the game for up to about 30 minutes (Riot sometimes takes a while to publish it), and a pop-up with <strong>Open</strong> says when it is in, even if you are looking at someone else. <strong>ARAM Mayhem</strong> games are not in Riot's API, so they are read from the League client right after the game and marked <em>from the client</em>.</li>
                     <li><strong>Live game</strong> (sidebar, or the Profile tab) scouts all 10 players: ranks, champion experience, recent form, tags (hot streak, one-trick, autofill, smurf? … click the <strong>?</strong> for the rules) and premades. "Not in game"? Press <strong>Check again</strong>.</li>
                     <li>The <strong>Home</strong> button next to the search box (your icon and Riot ID) takes you back to your own profile; it is hidden while you are on it. Also <strong>Alt+Home</strong> and Ctrl+K &gt; <strong>My profile</strong>. On someone else's profile, <strong>Live game</strong> shows their game; when you are in a game yourself a line offers <strong>show my game</strong>.</li>
@@ -610,8 +631,18 @@
             </details>
 
             <details>
+                <summary>Premades</summary>
+                <ul>
+                    <li>The players you queued with in 2+ of your saved games (your Profile's games; <strong>Load season history</strong> there saves more), following the Time Period unless <strong>All my saved games</strong> is ticked. Pick one for your record together (by lane pairing), your most played pairs, <strong>Untried strong pairs</strong> and pairs <strong>beating or missing the stats</strong>.</li>
+                    <li><strong>Click any pair</strong> for its details: both champions' Exp WR, win rate, games and pick rate; the synergy each way; how often the pair is played together in the data; your record with it; each one's hardest and easiest lane opponents; and the best <strong>third</strong> champion for the other roles. Esc or × closes it; a picture opens that champion's page.</li>
+                    <li><strong>Stack planner</strong>: tick up to 4 players for a 2-5 stack. Roles start as what each plays most with you (change them with the menus; whoever had that role swaps). It shows your record with all of you together, the <strong>best combos</strong> (every champion's strength + the synergy of every two of them) from <strong>Champions we played</strong> or <strong>Anyone</strong>, each player's <strong>best picks for this stack</strong>, and the combos you actually played. Click a combo for its details.</li>
+                </ul>
+            </details>
+
+            <details>
                 <summary>Settings</summary>
                 <ul>
+                    <li><strong>Keep running in the tray</strong> (Automation, on): closing the window keeps DravenGap in the tray so it still follows your games; quit from the tray icon. <strong>Start with Windows</strong> (off) starts it in the tray when you log in (installed app only).</li>
                     <li class="key-ui"><strong>Riot API key</strong> (optional): from developer.riotgames.com; paste it and press <strong>Save key</strong>. <strong>Test key</strong> checks it, <strong>Remove</strong> deletes it. Stored encrypted on this PC. Development keys expire after 24 hours.</li>
                     <li><strong>Default account</strong>: your Riot ID and region. Profile opens on it.</li>
                     <li><strong>Automation</strong>: Follow my game, opening the mini window in champion select, and sending runes, spells and item set when you lock in.</li>
@@ -624,9 +655,12 @@
             <details>
                 <summary>Data and time periods</summary>
                 <ul>
+                    <li><strong>New patch</strong>: the first time DravenGap runs on a new patch, a card shows what it did to <em>your</em> champions (My pool, else the ones you play most): buffed ▲, nerfed ▼ or adjusted from Riot's patch notes, and how each one's win rate moved. Open it again with Ctrl+K › <strong>Patch changes for my champions</strong>. The same green ▲ / red ▼ / blue marks sit next to champions in the draft; hover one for the changes.</li>
                     <li><strong>Current Patch</strong> is the freshest but thin early in a patch. <strong>Last 30 Days</strong> is larger but includes older patches.</li>
                     <li>Every patch you load is saved on this PC. Older ones then appear under <strong>Saved patches</strong>. Under <strong>Combined</strong>, <strong>Last 2 / 3 patches</strong> and <strong>Patch range...</strong> pool several patches for more games.</li>
                     <li>Several patches are written as a range, such as <strong>Last 3 patches (16.17–16.20)</strong>. If a patch inside the range is not saved, it says so ("· 16.19 missing"). Download it in Settings › Data.</li>
+                    <li><strong>Patch changes</strong>: a green <span class="pn-mark pn-buff">▲</span> (buffed), red <span class="pn-mark pn-nerf">▼</span> (nerfed) or blue <span class="pn-mark pn-adjust">=</span> (adjusted) next to a champion changed in the current patch, in the champion grid, recommendations and tier list. Hover it for Riot's reason and the changes. Riot's notes don't label buffs and nerfs, so DravenGap reads them from the numbers (cooldowns and costs: lower is better); a mix of both counts as adjusted.</li>
+                    <li><strong>Adaptive</strong> (Time Period, under Combined): matchups and synergies pool every saved patch of the season (up to 5), because they barely change between patches; only a champion rework cuts them off. Checked by predicting each patch from the ones before it, this halves the error of using the current patch alone. Older patches count by how far the meta has drifted since (measured: about 0.4 points of win rate per patch for an untouched champion, while matchup effects don't drift measurably). Buffs and nerfs from the patch notes are corrected for instead of cutting the data off; only a rework or a jump nothing explains ends a window. Only roles a champion really plays (10% of its games) borrow older patches. The <em>why</em> panel shows how many patches each number uses and which changes were corrected.</li>
                     <li><strong>Last 7 Days</strong> and <strong>Last 14 Days</strong>, and finished past patches, can be downloaded from <strong>Saved data...</strong> (Download more history). Rolling windows overlap patches, so they are never combined with them.</li>
                     <li>Data keeps itself fresh: DravenGap checks for newer data at start, hourly and when the window regains focus. Emerald+ is re-downloaded automatically; other ranks only when you ask. Offline, the last saved data is used.</li>
                 </ul>
@@ -707,6 +741,12 @@
                 <label class="settings-check" title="Shows the same notifications as Windows notifications, but only while DravenGap is in the background (for example while the League client is in front).">
                     <input type="checkbox" id="notify-win-toggle"> Also show Windows notifications
                 </label>
+                <label class="settings-check" title="Closing the window keeps DravenGap running in the tray (bottom right of the taskbar), so rune import on lock-in, the post-game profile refresh, notifications and the mini window keep working. Quit from the tray icon's menu.">
+                    <input type="checkbox" id="tray-mode-toggle" checked> Keep running in the tray when I close the window
+                </label>
+                <label class="settings-check" title="Starts DravenGap hidden in the tray when you log in to Windows, so it is ready when you open League. Only in the installed app.">
+                    <input type="checkbox" id="start-windows-toggle"> Start DravenGap with Windows (in the tray)
+                </label>
                 <div class="settings-hint">Tip: press <b>Ctrl+K</b> anywhere to search champions, views and Riot IDs; <b>?</b> lists the shortcuts.</div>
             </section>
 
@@ -785,6 +825,8 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></svg><span class="sb-label">Live game</span><i class="sb-dot" title="In game"></i></button>
         <button class="sb-item" data-view="scout" title="Look up several players at once (paste the lobby chat or Riot IDs)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M14 19a4 4 0 0 1 7 0"/></svg><span class="sb-label">Multi-search</span></button>
+        <button class="sb-item" data-view="premades" title="The players you queue with: your record, best and untried champion pairs (click one for details), and a 2-5 stack planner">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M2.5 19a5.5 5.5 0 0 1 11 0M10.5 19a5.5 5.5 0 0 1 11 0"/></svg><span class="sb-label">Premades</span></button>
         <button class="sb-item" data-view="dodgeball" title="Mundo Dodgeball: something to do while you wait in queue">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M4.5 9.5c5 1.5 10 1.5 15 0M4.5 14.5c5-1.5 10-1.5 15 0"/></svg><span class="sb-label">Dodgeball</span></button>
         <div class="sb-grow"></div>
@@ -835,7 +877,7 @@
         <div id="flow-bar" class="flow-bar" aria-label="Game flow"></div> <!-- workflow.js: lobby > champion select > in game > review -->
         <div class="draft-area" id="draft-area">
             <svg id="connector-svg"><path d="" stroke="var(--accent-color)" stroke-width="2" fill="none" stroke-dasharray="5,5"/></svg>
-            <div class="team-panel" id="left-team-panel"><h2 id="left-team-header">Left Team</h2></div>
+            <div class="team-panel" id="left-team-panel"><h2 id="left-team-header">Left Team <button type="button" class="team-clear" data-clear-side="left" title="Remove every champion from the left team">Clear</button></h2></div>
             <div class="center-column">
                 <div id="champion-grid-container">
                     <div id="champion-grid-header">
@@ -902,8 +944,9 @@
                             <div class="detail-col rec-stat-header sortable-header" data-sort="enemy_delta">Enemy Δ</div>
                             <div class="rec-stat-header sortable-header" data-sort="base_win_rate_shrunk" id="base-wr-header">Base WR</div>
                             <div class="detail-col rec-stat-header sortable-header" data-sort="role_frequency">Role Freq</div>
-                            <div class="rec-stat-header sortable-header" data-sort="personal_offset" id="personal-header">You</div>
+                            <div class="rec-stat-header sortable-header" data-sort="for_you" id="personal-header">For you</div>
                         </div>
+                        <div id="rec-card" class="rec-card" style="display: none;"></div>
                         <ol id="recommendation-list"></ol>
                     </div>
                     <div id="analysis-view" class="tab-content" style="display: none;">
@@ -929,7 +972,7 @@
                     </div>
                 </div>
             </div>
-            <div class="team-panel" id="right-team-panel"><h2 id="right-team-header">Right Team</h2></div>
+            <div class="team-panel" id="right-team-panel"><h2 id="right-team-header">Right Team <button type="button" class="team-clear" data-clear-side="right" title="Remove every champion from the right team">Clear</button></h2></div>
         </div>
         <!-- Full-page feature views, shown instead of #draft-area by DD.showView (see window.DD below). Each is owned by its own script. -->
         <div id="profile-root" class="feature-view" style="display: none;"></div> <!-- profile-view.js: op.gg-style profiles + live game -->
@@ -937,7 +980,8 @@
         <div id="arena-root" class="feature-view" style="display: none;"></div> <!-- arena-view.js: Arena tier list, augments, items -->
         <div id="champion-root" class="feature-view" style="display: none;"></div> <!-- champion-hub.js: one page per champion -->
         <div id="tierlist-root" class="feature-view" style="display: none;"></div> <!-- tierlist.js: SR tier list + patch movers -->
-        <div id="scout-root" class="feature-view" style="display: none;"></div> <!-- multisearch.js: several players at once -->
+        <div id="scout-root" class="feature-view" style="display: none;"></div>
+        <div id="premades-root" class="feature-view" style="display: none;"></div> <!-- premades-view.js: the players you queue with --> <!-- multisearch.js: several players at once -->
         <div id="builds-root" class="feature-view" style="display: none;"></div>  <!-- Builds view: the draft's #builds-view panel is moved in here -->    <!-- aram-view.js: ARAM Mayhem picks + builds -->
         <div id="dodgeball-root" class="feature-view" style="display: none;"></div> <!-- dodgeball-view.js: Mundo Dodgeball queue-time minigame -->
         <footer class="contact-footer"><span class="fork-credit" title="DravenGap is a personal fork of DraftDiff. All credit for the original app goes to its author, Lydig.">DravenGap &middot; a fork of <b>DraftDiff</b> by Lydig &nbsp;·&nbsp; github.com/Lydig/deltadraft &nbsp;·&nbsp; discord: lytten</span></footer>
@@ -1390,6 +1434,7 @@
                 // no reference. A narrow bracket borrows from the broad bracket of the SAME period, but only if that is saved too (it is
                 // then a superset of the target's games, which the complement estimate needs).
                 if (timePeriod !== 'patch' && timePeriod !== '30' && !isDayPeriod(timePeriod)) {
+                    if (timePeriod === ADAPTIVE_PERIOD) return null; // windows differ per bracket, so the reference would not contain the target's games
                     return (refRank !== rank && savedReferenceUsable(timePeriod, refRank, rank)) ? { timePeriod, rank: refRank } : null;
                 }
                 // The 7/14 day windows sit inside the 30-day window like the current patch does, so they borrow from it too
@@ -1573,7 +1618,7 @@
                                 if (champ === laneOpponent && role === targetRole) {
                                     laneDelta = delta;
                                 }
-                                deltaBreakdown.push({ source: champ, delta: delta, games: games, role, rel: relationship,
+                                deltaBreakdown.push({ source: champ, delta: delta, games: games, patches: stats && stats.patches || 0, role, rel: relationship,
                                     cls: classifyRelationship(targetRole, role, relationship), mean: pe ? pe.mean : 0, keep: pe ? pe.shrink : 0, used: !!pe });
                             }
                         }
@@ -1611,6 +1656,8 @@
                         base_win_rate_shrunk: pickCombo.win_rate_shrunk ?? baseWr,
                         base_win_rate_sd: pickCombo.win_rate_sd ?? null,
                         base_games: pickCombo.games ?? 0,
+                        base_patches: pickCombo.patches || 0,
+                        base_changes: pickCombo.changes || null,
                         pick_rate: pickCombo.pick_rate, 
                         role_frequency: pickCombo.role_frequency,
                         breakdown: deltaBreakdown.sort((a, b) => b.delta - a.delta),
@@ -1901,6 +1948,29 @@
             // Values: 'patch' (current patch), '30' (rolling last 30 days), 'p:16.18' (a saved patch), 'last2' / 'last3' (current patch +
             // the 1 / 2 newest saved patches for the selected rank). 'patch' and '30' behave exactly as before.
             const COMBINED_MAX = 3;
+            // 'adaptive': a window per statistic (see the Adaptive period block)
+            const ADAPTIVE_PERIOD = 'adaptive';
+            const ADAPTIVE_MAX_PATCHES = 5;
+            // No minimum: the next-patch check (below) showed that stopping a pair at 1,000 / 2,000 games, or a champion at 5,000,
+            // predicts the next patch WORSE than keeping every patch of the window. A cap can still be passed in (tests, experiments).
+            const ADAPTIVE_MIN = { champion: Infinity, lane: Infinity, pair: Infinity };
+            const ADAPTIVE_ROLE_SHARE = 0.10, ADAPTIVE_ROLE_KEEP = 0.07;
+            // Measured on Emerald+ 16.10–16.20 (11 patches, patch notes for each; all as win-rate fractions, so 1e-4 = 1 point²):
+            //  - champion untouched by the notes: its true win rate moves between patches by sd 0.40 / 0.45 / 0.56 / 0.62 points after
+            //    1 / 2 / 3 / 4 patches (sampling noise removed) = a per-patch wobble (0.09 pt²) plus a slow meta walk (0.072 pt² a patch);
+            //  - champion changed in the notes: buffs moved it +0.69 points on average (true sd 0.77 around that), nerfs -0.84 (0.86),
+            //    adjustments 0 (1.0);
+            //  - matchup / synergy deltas: their patch-to-patch changes are fully explained by sampling noise, for changed and untouched
+            //    champions alike, at every lag (true drift < ~0.3 points). So pairs pool across balance changes at almost full weight.
+            // Next-patch check (predict each patch 16.13-16.20 from the patches before it, error vs what it then showed, noise removed):
+            //    lane matchups: previous patch 1.08 pts, last 3 pooled 0.68, last 5 pooled 0.55, Adaptive with minimums 0.94;
+            //    champion win rate: previous patch 0.46, last 5 pooled 0.56, drift-weighted + corrected (this) 0.45.
+            //  -> pairs keep every patch of the window (only a rework ends it), champion win rates use the drift model below.
+            //    The result (Adaptive as built): champion win rate 0.454, lane matchups 0.560, other pairs 0.534 (best or tied best on all three).
+            const ADAPTIVE_DRIFT = { wobble: 0.09e-4, walk: 0.072e-4, pair: 0.09e-4 };
+            const ADAPTIVE_CHANGE_PRIOR = { buff: { m: 0.0069, sd: 0.0077 }, nerf: { m: -0.0084, sd: 0.0086 }, adjust: { m: 0, sd: 0.010 } };
+            const ADAPTIVE_REWORK = { lines: 12, words: /\b(rework\w*|reimagin\w*|visual (and gameplay )?update|VGU|relaunch\w*)\b/i };
+            const ADAPTIVE_JUMP_Z = 4;   // a jump this far outside what drift + noise + the change prior explain ends the window
             let archiveIndex = new Map();  // "16.18|platinum_plus" -> summary of a saved patch snapshot (blobs stay in IndexedDB)
             let offlineMode = false;       // R2 unreachable: metadata and datasets come from the local store
 
@@ -1913,11 +1983,14 @@
             function isDayPeriod(tp) { return Object.prototype.hasOwnProperty.call(DAY_PERIODS, tp); }
             // 'r:16.11-16.18' pools every patch in that range that is available for the rank (saved patches, plus the current patch if inside)
             function isRangePeriod(tp) { return /^r:\d+\.\d+-\d+\.\d+$/.test(tp); }
-            function isCombinedPeriod(tp) { return combinedCount(tp) >= 2 || isRangePeriod(tp); }
+            function isCombinedPeriod(tp) { return combinedCount(tp) >= 2 || isRangePeriod(tp) || tp === 'adaptive'; }
             let customRange = null;        // the user's chosen 'r:...' period, kept in the select across rebuilds
             let ddragonPatchLabels = [];   // every released patch ('16.19', '16.18', ...), newest first, from Data Dragon
             let ddragonVersions = [];      // every Data Dragon version ('16.19.1', ...), newest first
             let lastTimePeriod = 'patch';  // restored when the range picker is cancelled
+            // the saved Time Period when it was not in the list yet at startup (Adaptive, saved patches, Last N: they appear once the
+            // patch archive has been read from storage); selected as soon as it appears, unless a period was picked by hand meanwhile
+            let wantedTimePeriod = null;
             let dayIndex = new Map();      // "d7|platinum_plus" -> summary of a downloaded day window
             // metadata.last_updated_utc has no timezone suffix; it is UTC, so mark it as such before parsing
             function parseRunDate(text) { return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(text) ? text : text + 'Z'); }
@@ -1945,6 +2018,7 @@
                     const inRange = rangeCandidatePatches(rank).filter(p => comparePatchLabels(p, lo) >= 0 && comparePatchLabels(p, hi) <= 0);
                     return inRange.length ? inRange : null;
                 }
+                if (timePeriod === ADAPTIVE_PERIOD) { const ap = adaptivePatches(rank); return ap && ap.length ? ap.map(p => p.patch) : null; }
                 const n = combinedCount(timePeriod);
                 if (n >= 2 && cur) {
                     const saved = savedPatchesFor(rank);
@@ -1962,6 +2036,7 @@
                 if (isDayPeriod(timePeriod)) return DAY_PERIODS[timePeriod];
                 if (isRangePeriod(timePeriod)) return `Patches ${timePeriod.slice(2).replace('-', ' – ')}`;
                 if (isSavedPatchPeriod(timePeriod)) return `Patch ${timePeriod.slice(2)}`;
+                if (timePeriod === ADAPTIVE_PERIOD) return 'Adaptive';
                 const n = combinedCount(timePeriod);
                 if (n >= 2) return `Last ${n} patches`;
                 return 'Current Patch';
@@ -2027,11 +2102,14 @@
                 const saved = savedPatchesFor(rank);
                 const cur = currentPatchLabel();
                 const days = Object.keys(DAY_PERIODS).filter(tp => dayIndex.has(`${tp}|${rank}`));
-                let html = `<optgroup label="Live">${Object.entries(TIME_PERIODS).map(([val, name]) => `<option value="${val}">${name}</option>`).join('')}` +
+                let html = `<optgroup label="Live">${Object.entries(TIME_PERIODS).map(([val, name]) => `<option value="${val}">${name}${val === 'patch' && cur ? ` (${cur})` : ''}</option>`).join('')}` +
                     days.map(tp => `<option value="${tp}">${DAY_PERIODS[tp]} (downloaded)</option>`).join('') + `</optgroup>`;
                 if (saved.length) {
                     html += `<optgroup label="Saved patches">${saved.map(p => `<option value="p:${p}">Patch ${p} (saved)</option>`).join('')}</optgroup>`;
-                    let combined = '';
+                    const ap = periodPatches(ADAPTIVE_PERIOD, rank);
+                    let combined = ap && ap.length > 1
+                        ? `<option value="${ADAPTIVE_PERIOD}" title="Matchups and synergies pool every saved patch of the season up to ${patchRangeLabel(ap)} (they barely change between patches, so more games always help; only a champion rework cuts them off). Champion win rates lean on the current patch: older patches count by how much the meta has drifted since, and buffs and nerfs from the patch notes are corrected for. Checked against the next patch: clearly more accurate than the current patch alone.">Adaptive (more games, corrected for patches)</option>`
+                        : '';
                     for (let n = 2; n <= COMBINED_MAX && saved.length >= n - 1; n++) {
                         const list = [cur, ...saved.slice(0, n - 1)], miss = patchesMissingIn(list);
                         combined += `<option value="last${n}"${miss.length ? ` title="${patchMissingTip(miss)}"` : ''}>Last ${n} patches (${patchRangeLabel(list)})${patchMissingNote(miss)}</option>`;
@@ -2045,6 +2123,11 @@
                 timePeriodSelect.value = prev;
                 if (timePeriodSelect.value !== prev || prev === 'range-pick') timePeriodSelect.value = 'patch'; // not available for this rank (or first build)
                 lastTimePeriod = timePeriodSelect.value;
+                if (wantedTimePeriod && [...timePeriodSelect.options].some(o => o.value === wantedTimePeriod)) {
+                    const want = wantedTimePeriod;
+                    wantedTimePeriod = null;
+                    if (timePeriodSelect.value !== want) { timePeriodSelect.value = want; setTimeout(() => timePeriodSelect.dispatchEvent(new Event('change')), 0); }
+                }
             }
             function rangeOptionLabel(tp, patches) {
                 const [lo, hi] = tp.slice(2).split('-');
@@ -2149,6 +2232,7 @@
                 try { archiveIndex = new Map((await dsList('archive')).map(e => [e.key, e])); }
                 catch (e) { archiveIndex = new Map(); }
                 if (typeof patchTrendCache !== 'undefined') patchTrendCache.clear(); // a newly saved patch can give trends
+                window.dispatchEvent(new Event('dd:archive-changed'));             // views that show trends reload (tier list)
                 try { dayIndex = new Map((await dsList('live')).filter(e => isDayPeriod(e.period)).map(e => [e.key, e])); }
                 catch (e) { dayIndex = new Map(); }
             }
@@ -2216,6 +2300,7 @@
                     const rec = { win_rate: c.wr[i] };
                     if (!Number.isNaN(c.d2[i])) rec.delta2 = c.d2[i];
                     rec.total_games = c.games[i];
+                    if (c.np) rec.patches = c.np[i];
                     m.set(colKey(c.names, c.a[i], c.ra[i], c.b[i], c.rb[i], c.rel[i]), rec);
                 }
                 return m;
@@ -2282,6 +2367,174 @@
                 return { pooled, byClass };
             }
             // --- END: Columnar matchups ---
+
+            // --- Adaptive period: every statistic gets its own patch window ---
+            // 'adaptive' draws on the current patch and up to ADAPTIVE_MAX_PATCHES - 1 older saved patches of the same season, each
+            // statistic with its own window. An older patch's games count by how well it still describes today (ADAPTIVE_DRIFT:
+            // games x noise / (noise + drift since then)), so for a popular champion's win rate an old patch adds little and for a rare
+            // one almost all of its games; matchup / synergy pairs keep nearly all of them (they don't drift). Balance changes from the patch notes are corrected, not cut off: at a patch that buffed
+            // or nerfed a champion, the measured jump (shrunk toward the typical size of such a change, ADAPTIVE_CHANGE_PRIOR) is added to
+            // every older patch's win rate, and its uncertainty lowers their weight. A window only ends at a rework, a jump far outside
+            // what the change explains, or a jump the notes don't explain at all (an item or system change).
+            // Pair deltas are measured against each patch's own base win rates and showed no drift across patches or balance changes
+            // (see ADAPTIVE_DRIFT), so pairs pool across changes at nearly full weight.
+            // Only roles a champion really plays borrow older patches: >= 10% of its games over the window, kept down to 7% if it
+            // reached 10% in one of the patches. Off-roles keep the current patch alone (still shown, with their small sample).
+            // (The ADAPTIVE_* settings are in the Time periods block.)
+
+            // The patches the adaptive period may draw on for a rank, newest first: [{ patch, age }], or null without a current patch
+            function adaptivePatches(rank) {
+                const cur = currentPatchLabel();
+                if (!cur) return null;
+                const season = cur.split('.')[0];
+                const released = ddragonPatchLabels.filter(p => comparePatchLabels(p, cur) <= 0);
+                const out = [];
+                rangeCandidatePatches(rank).forEach((p, i) => {
+                    if (p.split('.')[0] !== season) return; // never across a season start
+                    const r = released.indexOf(p);
+                    const age = r >= 0 && released[0] === cur ? r : i;
+                    if (age < ADAPTIVE_MAX_PATCHES) out.push({ patch: p, age });
+                });
+                return out;
+            }
+            // Drift variance of a champion's true win rate between today and a patch `age` patches ago (0 for the current patch)
+            const adaptiveDrift = age => (age > 0 ? ADAPTIVE_DRIFT.wobble + ADAPTIVE_DRIFT.walk * age : 0);
+
+            // parts: newest first, [{ statsList, totalGames, patch, age }]. changesFor(champion, patch) -> undefined (no notes for that
+            // patch), null (not changed in it) or { kind: 'buff'|'nerf'|'adjust', rework } (the notes of `patch` = the changes going INTO it).
+            // Returns { statsList, windows: Map "champion,ROLE" -> { depth, played, used, changes } }: depth = how many patches the combo
+            // may reach back (1 for off-roles), used = patches its base win rate pools, changes = [{ patch, kind, d }] corrections inside
+            // the used window (d = estimated win-rate change at that patch, added to every older patch). Records get games (effective),
+            // window_patches and window_changes; pick_rate / role_frequency stay the current patch's (the meta now), or the pooled ones
+            // for a combo that has no games this patch.
+            function adaptiveChampionStats(parts, changesFor = () => undefined, min = ADAPTIVE_MIN.champion) {
+                const combos = new Map(), champTotals = parts.map(() => new Map());
+                parts.forEach((part, i) => {
+                    for (const item of part.statsList) {
+                        const role = item.role.toUpperCase(), key = `${item.champion},${role}`, g = comboGames(item, part.totalGames);
+                        let c = combos.get(key);
+                        if (!c) { c = { champion: item.champion, role: item.role, per: parts.map(() => null) }; combos.set(key, c); }
+                        c.per[i] = { g, wr: item.win_rate, item };
+                        champTotals[i].set(item.champion, (champTotals[i].get(item.champion) || 0) + g);
+                    }
+                });
+                const drift1 = adaptiveDrift(1);
+                const statsList = [], windows = new Map();
+                for (const [key, c] of combos) {
+                    // played role: share of the champion's games over the window, sticky down to 7%
+                    let mine = 0, all = 0, peak = 0;
+                    c.per.forEach((p, i) => {
+                        const t = champTotals[i].get(c.champion) || 0;
+                        if (p && p.g > 0) { mine += p.g; if (t > 0) peak = Math.max(peak, p.g / t); }
+                        all += t;
+                    });
+                    const share = all > 0 ? mine / all : 0;
+                    const played = share >= ADAPTIVE_ROLE_SHARE || (share >= ADAPTIVE_ROLE_KEEP && peak >= ADAPTIVE_ROLE_SHARE);
+                    // walk back patch by patch: correct known changes, stop at reworks and at jumps nothing explains
+                    let depth = played ? parts.length : 1;
+                    // pairs only stop at a rework of either champion (their deltas don't drift, off-roles included)
+                    let pairDepth = parts.length;
+                    for (let i = 1; i < parts.length; i++) { const ch = changesFor(c.champion, parts[i - 1].patch); if (ch && ch.rework) { pairDepth = i; break; } }
+                    const shift = [0], shiftVar = [0], changes = [];
+                    if (played) {
+                        let S = 0, SV = 0;
+                        for (let i = 1; i < parts.length; i++) {
+                            const newer = c.per[i - 1], older = c.per[i];
+                            const ch = changesFor(c.champion, parts[i - 1].patch);
+                            const J = newer && older && newer.g > 0 && older.g > 0 ? newer.wr - older.wr : null;
+                            const seJ2 = J === null ? 0 : newer.wr * (1 - newer.wr) / newer.g + older.wr * (1 - older.wr) / older.g;
+                            if (ch && ch.rework) { depth = i; break; }
+                            if (ch) {
+                                const pr = ADAPTIVE_CHANGE_PRIOR[ch.kind] || ADAPTIVE_CHANGE_PRIOR.adjust, t2 = pr.sd * pr.sd;
+                                let d = pr.m, dv = t2;
+                                if (J !== null) {
+                                    if (Math.abs(J - pr.m) > ADAPTIVE_JUMP_Z * Math.sqrt(t2 + seJ2 + drift1)) { depth = i; break; } // far bigger than such a change
+                                    const k = t2 / (t2 + seJ2 + drift1);
+                                    d = pr.m + k * (J - pr.m); dv = k * (seJ2 + drift1);
+                                }
+                                S += d; SV += dv; changes.push({ i, patch: parts[i - 1].patch, kind: ch.kind, d });
+                            } else if (J !== null && Math.abs(J) > (ch === null ? ADAPTIVE_JUMP_Z : 3) * Math.sqrt(seJ2 + drift1)) {
+                                depth = i; break; // a jump the notes don't explain (no notes for that patch: a lower bar)
+                            }
+                            shift[i] = S; shiftVar[i] = SV;
+                        }
+                    }
+                    // base win rate: inverse-variance pooling (noise + drift + correction uncertainty) until the minimum effective games
+                    let W = 0, WX = 0, eff = 0, used = 0, pickSum = 0, rfSum = 0, rfN = 0;
+                    for (let i = 0; i < depth && (i === 0 || eff < min); i++) {
+                        const p = c.per[i];
+                        if (!p || !(p.g > 0)) continue;
+                        const q = p.wr > 0 && p.wr < 1 ? p.wr * (1 - p.wr) : 0.25;
+                        const w = 1 / (q / p.g + adaptiveDrift(parts[i].age) + (shiftVar[i] || 0));
+                        W += w; WX += w * (p.wr + (shift[i] || 0)); eff += q * w; used = i + 1;
+                        pickSum += p.item.pick_rate || 0; rfSum += p.item.role_frequency || 0; rfN++;
+                    }
+                    const crossed = changes.filter(x => x.i < used).map(({ patch, kind, d }) => ({ patch, kind, d }));
+                    windows.set(key, { depth, played, used, changes: crossed, pairDepth });
+                    if (!(W > 0)) continue; // only in older patches and not a played role: not part of this period
+                    const now = c.per[0] && c.per[0].g > 0 ? c.per[0].item : null;
+                    statsList.push({
+                        champion: c.champion, role: c.role, win_rate: WX / W,
+                        pick_rate: now ? now.pick_rate : pickSum / rfN, role_frequency: now ? now.role_frequency : rfSum / rfN,
+                        games: Math.round(eff), window_patches: used, window_changes: crossed
+                    });
+                }
+                return { statsList, windows };
+            }
+
+            // Like poolCols, but each pair stops at its own minimum: list = columnar matchups newest first, ages = each part's age in
+            // patches, depthOf(name, role) = how many patches that champion-role may reach back. An older patch's n games count as
+            // n x noise / (noise + ADAPTIVE_DRIFT.pair) effective games (a pair's delta barely drifts, so rare pairs keep nearly all of
+            // them). Lane pairs (same role, enemies) need ADAPTIVE_MIN.lane effective games, every other pair ADAPTIVE_MIN.pair.
+            // Adds np = patches pooled per pair.
+            function poolColsAdaptive(list, ages, depthOf, min = ADAPTIVE_MIN) {
+                const names = [], idx = new Map();
+                for (const c of list) for (const nm of c.names) if (!idx.has(nm)) { idx.set(nm, names.length); names.push(nm); }
+                const G = names.length, N = G * 5 * G * 5 * 2;
+                const depth = new Uint8Array(G * 5);
+                for (let i = 0; i < G; i++) for (let r = 0; r < 5; r++) depth[i * 5 + r] = Math.max(1, Math.min(255, depthOf(names[i], COL_ROLES[r]) || 1));
+                const games = new Float64Array(N), wrSum = new Float64Array(N), d2Sum = new Float64Array(N), d2N = new Float64Array(N);
+                const seen = new Uint8Array(N), done = new Uint8Array(N), np = new Uint8Array(N);
+                list.forEach((c, p) => {
+                    const old = ages[p] > 0;
+                    const map = Int32Array.from(c.names, nm => idx.get(nm));
+                    for (let i = 0; i < c.n; i++) {
+                        const A = map[c.a[i]], B = map[c.b[i]];
+                        const code = (((A * 5 + c.ra[i]) * G + B) * 5 + c.rb[i]) * 2 + c.rel[i];
+                        if (done[code]) continue;
+                        if (p > 0 && (p >= depth[A * 5 + c.ra[i]] || p >= depth[B * 5 + c.rb[i]])) continue;
+                        seen[code] = 1;
+                        const n = c.games[i];
+                        if (!(n > 0)) continue;
+                        const q = c.wr[i] > 0 && c.wr[i] < 1 ? c.wr[i] * (1 - c.wr[i]) : 0.25;
+                        const wn = old ? n * q / (q + n * ADAPTIVE_DRIFT.pair) : n;
+                        games[code] += wn; wrSum[code] += wn * c.wr[i]; np[code] = p + 1;
+                        if (!Number.isNaN(c.d2[i])) { d2Sum[code] += wn * c.d2[i]; d2N[code] += wn; }
+                        if (games[code] >= (c.rel[i] === 0 && c.ra[i] === c.rb[i] ? min.lane : min.pair)) done[code] = 1;
+                    }
+                });
+                let count = 0;
+                for (let k = 0; k < N; k++) count += seen[k];
+                const out = { v: 1, n: count, names, a: new Uint16Array(count), b: new Uint16Array(count), ra: new Uint8Array(count), rb: new Uint8Array(count),
+                              rel: new Uint8Array(count), wr: new Float64Array(count), d2: new Float64Array(count), games: new Float64Array(count), np: new Uint8Array(count) };
+                let j = 0;
+                for (let k = 0; k < N; k++) {
+                    if (!seen[k]) continue;
+                    let r = k;
+                    out.rel[j] = r % 2; r = (r - out.rel[j]) / 2;
+                    out.rb[j] = r % 5; r = (r - out.rb[j]) / 5;
+                    out.b[j] = r % G; r = (r - out.b[j]) / G;
+                    out.ra[j] = r % 5; r = (r - out.ra[j]) / 5;
+                    out.a[j] = r;
+                    out.games[j] = Math.round(games[k]);
+                    out.wr[j] = games[k] > 0 ? wrSum[k] / games[k] : 0;
+                    out.d2[j] = d2N[k] > 0 ? d2Sum[k] / d2N[k] : NaN;
+                    out.np[j] = np[k];
+                    j++;
+                }
+                return out;
+            }
+            // --- END: Adaptive period ---
 
             // Raw (not yet post-processed) dataset of a single live/saved period: { statsList, matchups: Map, cols, totalGames, info }.
             // opts.needMap false: only the columnar form is needed (patch ranges pool the arrays and build one Map at the end).
@@ -2381,6 +2634,33 @@
                     } else {
                         parts.push(await acquireSnapshot(tp, rank, { needMap: false }));
                     }
+                }
+                if (timePeriod === ADAPTIVE_PERIOD) {
+                    const ap = adaptivePatches(rank), ages = ap.map(p => p.age);
+                    // the patch notes of every patch in the window (read once each, then saved): balance changes are corrected, not cut off
+                    const notesBy = {};
+                    await Promise.all(patches.map(async p => { notesBy[p] = window.DDPatchNotes ? await DDPatchNotes.get(p) : undefined; }));
+                    const changesFor = (champion, patch) => {
+                        const n = notesBy[patch];
+                        if (!n) return undefined;
+                        const c = n[champion];
+                        if (!c) return null;
+                        return { kind: c.kind, rework: (c.changes || []).length >= ADAPTIVE_REWORK.lines || ADAPTIVE_REWORK.words.test(c.context || '') };
+                    };
+                    const champ = adaptiveChampionStats(parts.map((p, i) => ({ statsList: p.statsList, totalGames: p.totalGames, patch: patches[i], age: ages[i] })), changesFor);
+                    const depthOf = (name, role) => { const x = champ.windows.get(`${name},${role}`); return x ? x.pairDepth : ages.length; };
+                    for (const p of parts) if (!p.cols && p.matchups) p.cols = matchupsToCols(p.matchups, p.matchups.size);
+                    const usable = [];
+                    for (const p of parts) { if (!p.cols) break; usable.push(p.cols); } // a part that can't be columnar ends the windows there
+                    if (!usable.length) throw new Error('Adaptive: the current patch could not be read');
+                    const cols = poolColsAdaptive(usable, ages, depthOf);
+                    return {
+                        statsList: champ.statsList, matchups: colsToMap(cols), cols, totalGames: parts[0].totalGames,
+                        info: {
+                            source: 'combined', adaptive: true, windows: champ.windows, notes: Object.keys(notesBy).filter(p => notesBy[p]), patches, savedAt: parts[0].info.savedAt, offline: parts.some(p => p.info.offline),
+                            parts: parts.map((p, i) => ({ patch: patches[i], savedAt: p.info.savedAt }))
+                        }
+                    };
                 }
                 const stats = combineChampionStats(parts.map(p => ({ statsList: p.statsList, totalGames: p.totalGames })));
                 let matchups, cols = null;
@@ -2779,8 +3059,9 @@
                             : 'Archived patch: the last snapshot stored while this patch was current.';
                     } else if (info.source === 'combined') {
                         const miss = patchesMissingIn(info.patches);
-                        patchText = `Patches ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}`;
+                        patchText = `${info.adaptive ? 'Adaptive · up to patches' : 'Patches'} ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}`;
                         patchTip = miss.length ? patchMissingTip(miss) : '';
+                        if (info.adaptive) patchTip = (patchTip ? patchTip + '\n' : '') + 'Each statistic uses only as many of these patches as it needs for enough games (see the "why" panel of a pick).';
                         whenText = ago ? `Current patch updated ${ago}` : '';
                         tip = info.parts.map(p => `Patch ${p.patch}: snapshot ${p.savedAt ? parseRunDate(p.savedAt).toLocaleString() : 'unknown'}`).join('\n');
                         if (info.offline) whenText = `Offline — using saved data (${whenText})`;
@@ -2795,6 +3076,7 @@
                     if (freshStatus.checkedAt) tip = (tip ? tip + '\n' : '') + `Checked for newer data at ${new Date(freshStatus.checkedAt).toLocaleTimeString()}.`;
                 } else if (fresh.checkedAt) tip = (tip ? tip + '\n' : '') + `Checked for newer data at ${new Date(fresh.checkedAt).toLocaleTimeString()}.`;
                 patchInfoDiv.textContent = patchText;
+                if (window.DDPatchNotes) DDPatchNotes.load(cur); // a new patch: its notes (once per patch)
                 patchInfoDiv.title = patchTip;
                 lastUpdatedInfoDiv.textContent = whenText;
                 lastUpdatedInfoDiv.title = tip;
@@ -2809,7 +3091,7 @@
                 const info = ds.info || {};
                 const local = isDayPeriod(tp) || info.scraped;
                 const miss = info.source === 'combined' && info.patches ? patchesMissingIn(info.patches) : [];
-                const period = tp === 'patch' && currentPatchLabel() ? `Patch ${currentPatchLabel()}` : info.source === 'combined' && info.patches ? `Patches ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}` : periodLabel(tp);
+                const period = tp === 'patch' && currentPatchLabel() ? `Patch ${currentPatchLabel()}` : info.source === 'combined' && info.patches ? `${info.adaptive ? 'Adaptive · up to patches' : 'Patches'} ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}` : periodLabel(tp);
                 const rows = [['Min Games', minGamesFilter.value || '0']];
                 if (miss.length) rows.push(['Not saved', `${miss.join(', ')}: download in Settings > Data > Saved data`]);
                 if (refStatusEl.textContent) rows.push(['Prior', refStatusEl.textContent]);
@@ -2893,9 +3175,24 @@
             const canScrape = !!(window.electronAPI && window.electronAPI.scrapeStart);
             let scrapeState = null; // { jobs, index, done, total, completed, failed } while a download runs
 
+            // Patches that can be downloaded, newest first: every released patch up to the newest one LoLalytics has (read from its
+            // site, so a new patch shows up the day LoLalytics has it, even before Data Dragon or the shared dataset), including the
+            // current one. Without an answer from LoLalytics: up to the current patch.
+            let lolaLatestPatch = null, lolaLatestAsked = 0;
             function pastPatchLabels() {
-                const cur = currentPatchLabel();
-                return ddragonPatchLabels.filter(p => !cur || comparePatchLabels(p, cur) < 0);
+                const top = lolaLatestPatch || currentPatchLabel() || ddragonPatchLabels[0];
+                const list = ddragonPatchLabels.filter(p => !top || comparePatchLabels(p, top) <= 0);
+                if (top && !list.includes(top)) list.unshift(top);
+                return list.sort((a, b) => comparePatchLabels(b, a));
+            }
+            function refreshLolaLatestPatch() {
+                if (!window.electronAPI.scrapeLatestPatch || Date.now() - lolaLatestAsked < 3600e3) return;
+                lolaLatestAsked = Date.now();
+                window.electronAPI.scrapeLatestPatch().then(p => {
+                    if (!p || p === lolaLatestPatch) return;
+                    lolaLatestPatch = p;
+                    if (!scrapeState && document.getElementById('scrape-from')) renderScrapeSection();
+                }).catch(() => {});
             }
 
             function renderScrapeSection() {
@@ -2907,13 +3204,15 @@
                     document.getElementById('scrape-cancel-btn').addEventListener('click', () => window.electronAPI.scrapeCancel());
                     return;
                 }
+                refreshLolaLatestPatch();
                 const past = pastPatchLabels();
                 if (!past.length) { el.innerHTML = ''; return; }
-                const opts = past.map(p => `<option value="${p}">${p}</option>`).join('');
+                const live = currentPatchLabel();
+                const opts = past.map(p => `<option value="${p}">${p}${comparePatchLabels(p, live || p) >= 0 ? ' (current, still changing)' : ''}</option>`).join('');
                 const rankBoxes = Object.entries(RANKS).map(([val, name]) =>
                     `<label><input type="checkbox" class="scrape-rank" value="${val}"${SCRAPE_BROAD_RANKS.includes(val) ? ' checked' : ''}> ${name}</label>`).join('');
                 el.innerHTML = `<h3>Download more history</h3>
-                    <p class="scrape-muted">Downloads data the shared dataset doesn't have, straight from LoLalytics on this PC: finished past patches (combine them with "Patch range…") and the 7 / 14 day windows.</p>
+                    <p class="scrape-muted">Downloads data the shared dataset doesn't have, straight from LoLalytics on this PC: past patches (combine them with "Patch range…"), the current patch for any rank, and the 7 / 14 day windows. The newest patch LoLalytics has${lolaLatestPatch ? ` (${lolaLatestPatch})` : ''} is offered as soon as it's out; a current patch is still collecting games, so download it again later for the full patch.</p>
                     <div class="range-row">
                         <label>Patches from <select id="scrape-from">${opts}</select></label>
                         <label>to <select id="scrape-to">${opts}</select></label>
@@ -3105,7 +3404,9 @@
                         championRatings.set(comboKey, {
                             win_rate: item.win_rate,
                             pick_rate: item.pick_rate,
-                            role_frequency: item.role_frequency
+                            role_frequency: item.role_frequency,
+                            patches: item.window_patches || 0, // adaptive period: patches its base win rate pools
+                            changes: item.window_changes || null // and the balance changes corrected inside them
                         });
 
                         if (!roleProbabilities[item.champion]) {
@@ -3243,7 +3544,11 @@
                 if (isRangePeriod(effectiveSettings.timePeriod)) customRange = effectiveSettings.timePeriod;
                 rebuildTimePeriodOptions(); // saved/combined periods depend on the rank
                 timePeriodSelect.value = effectiveSettings.timePeriod;
-                if (timePeriodSelect.value !== effectiveSettings.timePeriod) timePeriodSelect.value = 'patch'; // saved period no longer available
+                wantedTimePeriod = null;
+                if (timePeriodSelect.value !== effectiveSettings.timePeriod) { // not listed (yet): the patch archive may still be loading
+                    timePeriodSelect.value = 'patch';
+                    if (effectiveSettings.timePeriod !== 'range-pick') wantedTimePeriod = effectiveSettings.timePeriod;
+                }
                 baseWrFilter.value = effectiveSettings.baseWr;
                 roleRateFilter.value = effectiveSettings.roleRate;
                 favoritesOnlyToggle.checked = effectiveSettings.favoritesOnly;
@@ -3313,7 +3618,7 @@
             const AUTO_SCRAPE_MAX_JOBS = 8;                // per run; the rest follows on later checks
             const fresh = { running: null, checkedAt: 0, metaAt: 0, timer: null, scrapeStarting: false };
             const freshStatus = { text: '', until: 0, checkedAt: 0, timer: null };
-            const LIVE_KEY_RE = /^(patch|30|last\d|r:\d+\.\d+-\d+\.\d+)-/;
+            const LIVE_KEY_RE = /^(patch|30|last\d|adaptive|r:\d+\.\d+-\d+\.\d+)-/;
 
             function setFreshStatus(text, ms) {
                 clearTimeout(freshStatus.timer);
@@ -3337,7 +3642,7 @@
                 const runId = metadata && metadata.last_updated_utc, cur = currentPatchLabel(), i = ds && ds.info;
                 if (!runId || !i || !LIVE_KEY_RE.test(key)) return false;
                 if (i.source === 'combined') {
-                    if (key.startsWith('last') && i.patches[0] !== cur) return true;
+                    if ((key.startsWith('last') || key.startsWith('adaptive-')) && i.patches[0] !== cur) return true;
                     const idx = i.patches.indexOf(cur);
                     return idx >= 0 && (i.parts[idx].savedAt !== runId || !!i.offline);
                 }
@@ -3517,6 +3822,7 @@
                     } catch (e) { console.warn('Packed data not imported:', e.message); }
 
                     metadata = await loadMetadata();
+                    if (window.DDPatchNotes) DDPatchNotes.load(currentPatchLabel()); // in the background
                     fresh.metaAt = offlineMode ? 0 : Date.now();
                     await refreshArchiveIndex();
                     refreshStorageUI();
@@ -3590,8 +3896,8 @@
             }
 
             function createRoleSlots() {
-                leftTeamPanel.innerHTML = '<h2 id="left-team-header">Left Team</h2>';
-                rightTeamPanel.innerHTML = '<h2 id="right-team-header">Right Team</h2>';
+                leftTeamPanel.innerHTML = '<h2 id="left-team-header">Left Team <button type="button" class="team-clear" data-clear-side="left" title="Remove every champion from the left team">Clear</button></h2>';
+                rightTeamPanel.innerHTML = '<h2 id="right-team-header">Right Team <button type="button" class="team-clear" data-clear-side="right" title="Remove every champion from the right team">Clear</button></h2>';
                 roles.forEach(role => {
                     let iconRoleName = role.toLowerCase();
                     if (iconRoleName === 'support') {
@@ -3727,7 +4033,8 @@
 
             async function updateRecommendations() {
                 if (!recommendationTarget) {
-                    recommendationList.innerHTML = '';
+                    // no slot chosen (the client picks your own slot during champion select; without it, nothing is chosen yet)
+                    recommendationList.innerHTML = `<li class="rec-hint">Click the 💡 on a slot (either team) to see the best champions for it. Champions already on the board are counted.</li>`;
                     return;
                 }
                 
@@ -3825,7 +4132,7 @@
                     out.set(c.champion, {
                         champion: c.champion, championId: c.championId, games: c.games, wins: c.wins,
                         wr: c.wins / c.games, expected: expMean, baseline: gHat,
-                        raw: adj, offset: k * adj, sd: Math.sqrt(k * v), roleGames: c.roleGames
+                        raw: adj, offset: k * adj, sd: Math.sqrt(k * v), roleGames: c.roleGames, k
                     });
                 }
                 return out;
@@ -3858,7 +4165,8 @@
                         btn.title = data
                             ? `Loaded ${data.games.length} Summoner's Rift games (ranked + normals) for ${data.summoner.name || 'you'}. Click to refresh.`
                             : 'League client not reachable. Click to retry.';
-                        btn.textContent = data ? `My stats: ${data.games.length} games` : 'My stats: client not found';
+                        btn.textContent = data ? `My stats: ${data.games.length} games${data.offline ? ' (saved)' : ''}` : 'My stats: client not found';
+                        if (data && data.offline) btn.title = `The League client is closed: using your ${data.games.length} saved games${data.summoner.name ? ` (${data.summoner.name})` : ''}. Click to check again.`;
                     }
                 } catch (e) {
                     personalFetchedAt = Date.now();
@@ -3987,26 +4295,84 @@
 
             function showPersonalCellTooltip(li) {
                 const name = li.dataset.championName;
+                const pk = lastRecommendations.find(p => p.champion === name);
+                const head = pk && pk.for_you != null ? `<p><b>For you: ${(pk.for_you * 100).toFixed(1)}%</b> = Exp WR ${(pk.exp_wr * 100).toFixed(1)}%${pk.personal.games ? ` ${fmtPersonalPct(pk.personal.offset)} your record` : ''}${Math.abs(pk.personal.penalty) >= 0.0005 ? ` ${fmtPersonalPct(pk.personal.penalty)} unfamiliar (estimate: you have ${pk.personal.games ? pk.personal.games + ' game' + (pk.personal.games === 1 ? '' : 's') : 'no games'} on it)` : ''}</p>` : '';
                 const info = getPersonalOffsets(currentDatasetSync())?.get(name);
                 const champKey = (allChampions.find(c => c.id === name) || {}).key;
                 const mastery = personalRaw && personalRaw.mastery ? personalRaw.mastery[champKey] : null;
                 const masteryStr = mastery ? `Mastery level ${mastery.level} · ${mastery.points.toLocaleString()} pts` : 'No mastery data';
                 if (!info) {
-                    ppTooltip.innerHTML = `<h4>${name}: You</h4><p>${personalRaw ? "No Summoner's Rift games on this champion in your saved history yet." : 'Personal stats not loaded (is the League client running? Use "Refresh my stats").'}</p><p class="pp-muted">${masteryStr}</p>`;
+                    ppTooltip.innerHTML = `<h4>${name}: For you</h4>${head}<p>${personalRaw ? "No Summoner's Rift games on this champion in your saved history yet." : 'Personal stats not loaded (is the League client running? Use "Refresh my stats").'}</p><p class="pp-muted">${masteryStr}</p>`;
                 } else {
                     const roles = Object.entries(info.roleGames).map(([r, n]) => `${r === '?' ? 'role unknown' : r.toLowerCase()} ${n}`).join(', ');
                     ppTooltip.innerHTML = `
-                        <h4>${name}: ${fmtPersonalPct(info.offset)} ± ${(info.sd * 100).toFixed(1)}%</h4>
+                        <h4>${name}: For you</h4>${head}<p>Your record on it: <b>${fmtPersonalPct(info.offset)}</b> ± ${(info.sd * 100).toFixed(1)}%</p>
                         <p>${info.wins}W / ${info.games - info.wins}L in ${info.games} game${info.games === 1 ? '' : 's'} (${roles})<br>
                         Your WR ${(info.wr * 100).toFixed(1)}% vs expected ${(info.expected * 100).toFixed(1)}% (raw ${fmtPersonalPct(info.wr - info.expected)})</p>
                         <p>Your overall level vs. dataset (other champions): ${fmtPersonalPct(info.baseline)}<br>
                         Adjusted raw offset: ${fmtPersonalPct(info.raw)} → shrunk <b>${fmtPersonalPct(info.offset)}</b> ± ${(info.sd * 100).toFixed(1)}% (1 SD)</p>
-                        <p class="pp-muted">${masteryStr}. Not part of Total Δ / PP. Hover the "You" header for details.</p>`;
+                        <p class="pp-muted">${masteryStr}. Not part of Exp WR, Total Δ or PP: only of For you. Hover the "For you" header for details.</p>`;
                 }
                 ppTooltip.style.opacity = '1';
             }
             // --- end Personal ---
 
+            // --- For you: Exp WR adjusted for YOU on this champion ---
+            //   for_you = Exp WR + your shrunk offset on the champion (the "You" number, measured from your games)
+            //           + an unfamiliarity estimate for champions you have hardly played: -4 points for a first game, fading with
+            //             experience (familiarity f = max(your saved games on it, mastery points / 800)): -4 · e^(-f/8)
+            //             (about -2.1 at 5 games, -1.1 at 10, -0.3 at 20), counted only for the part the offset doesn't already
+            //             measure (x (1 - k), k = how much of the offset is your own data rather than the prior).
+            // The unfamiliarity curve is an assumption (typical first-games results), not measured from your account; the offset is.
+            // null when your stats are not loaded (no client and nothing saved).
+            const UNFAMILIAR_MAX = 0.04, UNFAMILIAR_SCALE = 8, MASTERY_PER_GAME = 800;
+            function personalFor(pick, personalMap) {
+                if (!personalRaw) return null;
+                const info = personalMap && personalMap.get(pick.champion);
+                const key = (allChampions.find(c => c.id === pick.champion) || {}).key;
+                const m = personalRaw.mastery ? personalRaw.mastery[key] : null;
+                const games = info ? info.games : 0;
+                const fam = Math.max(games, m && m.points ? m.points / MASTERY_PER_GAME : 0);
+                const k = info ? info.k : 0;
+                const penalty = -UNFAMILIAR_MAX * Math.exp(-fam / UNFAMILIAR_SCALE) * (1 - k);
+                const offset = info ? info.offset : 0;
+                return { adj: offset + penalty, offset, penalty, games, fam, wins: info ? info.wins : 0 };
+            }
+            function attachPersonal(picks) {
+                const map = getPersonalOffsets(currentDatasetSync());
+                for (const pick of picks) {
+                    const pf = personalFor(pick, map);
+                    pick.personal_offset = pf && pf.games ? pf.offset : null;
+                    pick.personal = pf;
+                    pick.for_you = pf && pick.exp_wr != null ? Math.min(0.99, Math.max(0.01, pick.exp_wr + pf.adj)) : null;
+                }
+                return picks;
+            }
+            // one line of reasons for a pick (the decision card)
+            function pickReasons(pick) {
+                const out = [];
+                const lane = (pick.delta_breakdown || []).find(b => b.cls === 'lane' && b.used);
+                if (lane && Math.abs(lane.mean) >= 0.008) out.push(`${lane.mean > 0 ? 'good' : 'hard'} into ${champDisplayName(lane.source)} (${lane.mean > 0 ? '+' : ''}${(lane.mean * 100).toFixed(1)})`);
+                const syn = (pick.delta_breakdown || []).filter(b => b.rel === 'teammate' && b.used).sort((a, b) => b.mean - a.mean)[0];
+                if (syn && syn.mean >= 0.008) out.push(`with ${champDisplayName(syn.source)} +${(syn.mean * 100).toFixed(1)}`);
+                const pf = pick.personal;
+                if (pf && pf.games >= 3) out.push(`you're ${pf.wins}-${pf.games - pf.wins} on it`);
+                else if (pf && pf.fam < 5) out.push(pf.games ? `only ${pf.games} game${pf.games === 1 ? '' : 's'} on it` : 'new to you');
+                const base = pick.base_win_rate_shrunk ?? pick.base_win_rate;
+                if (!out.length && base != null) out.push(`base WR ${(base * 100).toFixed(1)}%`);
+                if (pick.blind && pick.blind.counters && pick.blind.counters.length && pick.blind.ev < -0.005) out.push(`risky blind`);
+                return out.slice(0, 3).join(' · ');
+            }
+            // the decision card: your 3 best picks for you (from My pool when it is known), and one outside it if clearly better
+            function decisionCard(picks, pool) {
+                const ok = picks.filter(p => p.for_you != null && !unavailableChampions.has(p.champion));
+                if (!ok.length) return null;
+                const mine = pool ? ok.filter(p => pool.has(p.champion)) : ok;
+                const top = mine.slice().sort((a, b) => b.for_you - a.for_you).slice(0, 3);
+                const outside = pool ? ok.filter(p => !pool.has(p.champion)).sort((a, b) => b.for_you - a.for_you)[0] : null;
+                const alt = outside && top[0] && outside.for_you >= top[0].for_you + 0.015 ? outside : null;
+                return { top, alt };
+            }
             // --- Why this pick: the row's Exp WR taken apart (base strength + every pairing, adjusted, + blind-pick risk) ---
             const whyOpen = new Set();   // "ROLE|Champion" rows whose panel is open (kept across re-renders)
             const whyKey = champ => `${recommendationTarget ? recommendationTarget.side + '|' + recommendationTarget.role : ''}|${champ}`;
@@ -4026,11 +4392,11 @@
                 const bar = v => `<span class="why-bar"><i class="${v >= 0 ? 'pos' : 'neg'}" style="width:${Math.min(100, Math.abs(v) / maxAbs * 100).toFixed(0)}%"></i></span>`;
                 const base = pick.base_win_rate_shrunk ?? pick.base_win_rate;
                 let html = `<div class="why-line why-base"><span class="why-who"><b>Champion strength</b> <span class="why-cls">base WR, all games</span></span>` +
-                    `<span class="why-val">${pct(base)}</span><span class="why-raw">raw ${pct(pick.base_win_rate)} · ~${Math.round(pick.base_games || 0).toLocaleString()} games</span></div>`;
+                    `<span class="why-val">${pct(base)}</span><span class="why-raw">raw ${pct(pick.base_win_rate)} · ~${Math.round(pick.base_games || 0).toLocaleString()} games${pick.base_patches > 1 ? ` · ${pick.base_patches} patches${(pick.base_changes || []).length ? `, older corrected for ${pick.base_changes.map(c => `the ${esc(c.patch)} ${c.kind === 'adjust' ? 'adjustment' : c.kind} (${pts(c.d)})`).join(', ')}` : ''}` : ''}</span></div>`;
                 if (trend && trend.prevPatch) html += `<div class="why-line"><span class="why-who">Patch trend <span class="why-cls">vs ${esc(trend.prevPatch)}</span></span><span class="why-val ${trend.d >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(trend.d)}</span><span class="why-raw">${trend.flag ? 'a real change (beyond noise)' : 'within noise'} · not added to Exp WR</span></div>`;
                 html += used.length ? used.map(b => `<div class="why-line"><span class="why-who"><img src="${champImgUrl(b.source)}" alt="">${b.rel === 'enemy' ? 'vs' : 'with'} ${esc(champDisplayName(b.source))} <span class="why-cls">${WHY_CLASS[b.cls] || b.cls}</span></span>` +
                     `${bar(b.mean)}<span class="why-val ${b.mean >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(b.mean)}</span>` +
-                    `<span class="why-raw">raw ${pts(b.delta)} · ${b.games.toLocaleString()} games · keeps ${Math.round(b.keep * 100)}%</span></div>`).join('')
+                    `<span class="why-raw">raw ${pts(b.delta)} · ${b.games.toLocaleString()} games${b.patches > 1 ? ` (${b.patches} patches)` : ''} · keeps ${Math.round(b.keep * 100)}%</span></div>`).join('')
                     : `<div class="why-line why-muted">No pairings with enough games yet (Min Games ${esc(minGamesFilter.value || '0')}).</div>`;
                 if (unused) html += `<div class="why-line why-muted">${unused} pairing${unused === 1 ? '' : 's'} below Min Games: counted as 0.</div>`;
                 html += `<div class="why-line why-sum"><span class="why-who"><b>Draft effect</b> <span class="why-cls">sum of the adjusted pairings</span></span><span class="why-val ${pick.shrunk_delta >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(pick.shrunk_delta)}</span><span class="why-raw">± ${(pick.shrunk_sd * 100).toFixed(1)} (1 SD)</span></div>`;
@@ -4040,7 +4406,11 @@
                     html += `<div class="why-line why-blind"><span class="why-who"><b>Blind pick</b> <span class="why-cls">lane opponent not picked yet (${b.n} likely)</span></span><span class="why-val ${b.ev >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(b.ev)}</span><span class="why-raw">expected lane effect · downside risk ${(b.risk * 100).toFixed(1)}</span></div>`;
                     if (b.counters.length) html += `<div class="why-line why-counters">Counters to watch: ${b.counters.map(c => `<span class="why-counter"><img src="${champImgUrl(c.champion)}" alt="">${esc(champDisplayName(c.champion))} <b class="delta-neg">${pts(c.d)}</b> <span class="why-cls">${Math.round(c.share * 100)}% of picks</span></span>`).join('')}</div>`;
                 }
-                if (pick.personal_offset != null) html += `<div class="why-line"><span class="why-who">You on ${esc(champDisplayName(pick.champion))} <span class="why-cls">personal history, separate from Exp WR</span></span><span class="why-val ${pick.personal_offset >= 0 ? 'delta-pos' : 'delta-neg'}">${fmtPersonalPct(pick.personal_offset)}</span><span class="why-raw"></span></div>`;
+                if (pick.for_you != null && pick.personal) {
+                    const pf = pick.personal;
+                    html += `<div class="why-line why-total"><span class="why-who"><b>For you</b> <span class="why-cls">Exp WR + you on ${esc(champDisplayName(pick.champion))}</span></span><span class="why-val ${pick.for_you >= 0.5 ? 'delta-pos' : 'delta-neg'}">${pct(pick.for_you)}</span>` +
+                        `<span class="why-raw">${pf.games ? `your record ${fmtPersonalPct(pf.offset)} (${pf.wins}-${pf.games - pf.wins})` : 'no games on it'}${Math.abs(pf.penalty) >= 0.0005 ? ` · unfamiliar ${fmtPersonalPct(pf.penalty)} (estimate)` : ''}</span></div>`;
+                }
                 html += `<div class="why-line why-muted"><button type="button" class="link-btn" data-hub="${esc(pick.champion)}" data-hub-role="${recommendationTarget ? recommendationTarget.role : ''}">${esc(champDisplayName(pick.champion))}: all matchups, synergies, builds and your games ›</button></div>`;
                 const div = document.createElement('div');
                 div.className = 'why-panel';
@@ -4052,7 +4422,7 @@
             const patchTrendCache = new Map(); // "period|rank" -> { prevPatch, map: "Champ,ROLE" -> { shrunk, sd } } | null | Promise
             function trendKey() { return `${timePeriodSelect.value}|${rankSelect.value}`; }
             async function loadPatchTrend(tp, rank) {
-                const cur = tp === 'patch' ? currentPatchLabel() : (isSavedPatchPeriod(tp) ? tp.slice(2) : null);
+                const cur = tp === 'patch' || tp === ADAPTIVE_PERIOD ? currentPatchLabel() : (isSavedPatchPeriod(tp) ? tp.slice(2) : null);
                 if (!cur) return null;
                 let prev = null;
                 for (const e of archiveIndex.values()) if (e.rank === rank && comparePatchLabels(e.patch, cur) < 0 && (!prev || comparePatchLabels(e.patch, prev) > 0)) prev = e.patch;
@@ -4063,17 +4433,26 @@
                 const shrunk = shrinkBaseWinRates(statsList, entry.totalGames || 0);
                 return { prevPatch: prev, map: shrunk };
             }
+            // The trend of a period/rank, loaded once: the cache holds the Promise while it loads, then the result (null = no previous
+            // patch). Views that need it complete (tier list, patch movers) await this instead of guessing how long it takes.
+            function ensurePatchTrend(key = trendKey()) {
+                const c = patchTrendCache.get(key);
+                if (c !== undefined) return Promise.resolve(c);
+                const [tp, rank] = key.split('|');
+                const p = loadPatchTrend(tp, rank).catch(() => null).then(t => {
+                    if (patchTrendCache.get(key) === p) patchTrendCache.set(key, t);
+                    if (t && trendKey() === key && lastRecommendations.length) displayFilteredRecommendations();
+                    return t;
+                });
+                patchTrendCache.set(key, p);
+                return p;
+            }
             function patchTrendFor(champ, role) {
                 if (!role) return null;
                 const key = trendKey();
-                if (!patchTrendCache.has(key)) {
-                    patchTrendCache.set(key, null);
-                    const [tp, rank] = key.split('|');
-                    loadPatchTrend(tp, rank).then(t => { patchTrendCache.set(key, t); if (t && trendKey() === key && lastRecommendations.length) displayFilteredRecommendations(); })
-                        .catch(() => patchTrendCache.set(key, null));
-                    return null;
-                }
+                if (!patchTrendCache.has(key)) { ensurePatchTrend(key); return null; }
                 const t = patchTrendCache.get(key);
+                if (t instanceof Promise) return null;
                 const ds = currentDatasetSync();
                 if (!t || !ds) return null;
                 const now = ds.champion_ratings.get(`${champ},${role}`), before = t.map.get(`${champ},${role}`);
@@ -4105,14 +4484,33 @@
                 return `<span class="ewr-bar"><b></b><i class="${window.DD.ppClass(p50)}" style="left:${lo.toFixed(1)}%;width:${Math.max(2, hi - lo).toFixed(1)}%"></i><em style="left:${x(wr).toFixed(1)}%"></em></span>`;
             }
 
+            document.getElementById('rec-card').addEventListener('click', e => {
+                const b = e.target.closest('[data-rc]');
+                if (b && window.DD.showPickInDraft) window.DD.showPickInDraft(b.dataset.rc);
+            });
+            function renderDecisionCard(picks, pool) {
+                const el = document.getElementById('rec-card');
+                if (!el) return;
+                const card = personalRaw ? decisionCard(picks, pool || myPoolSet()) : null;
+                if (!card || !card.top.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+                const item = (p, cls = '') => {
+                    const c = allChampions.find(x => x.id === p.champion);
+                    return `<button type="button" class="rc-pick ${cls}" data-rc="${p.champion}" title="Show ${champDisplayName(p.champion)} in the list with its why panel">
+                        ${c && latestPatch ? `<img src="${DDRAGON_BASE_URL}/cdn/${latestPatch}/img/champion/${c.image.full}" alt="">` : ''}
+                        <span class="rc-txt"><b>${champDisplayName(p.champion)}</b> <span class="${p.for_you >= 0.5 ? 'delta-pos' : 'delta-neg'}">${(p.for_you * 100).toFixed(1)}%</span><br><span class="rc-why">${pickReasons(p)}</span></span></button>`;
+                };
+                el.innerHTML = `<div class="rc-h">Best for you <span class="rc-m">${myPoolToggle.checked || pool ? 'from your pool' : 'from your champions'} · Exp WR adjusted for your games on each</span></div>
+                    <div class="rc-row">${card.top.map(p => item(p)).join('')}${card.alt ? item(card.alt, 'rc-alt') : ''}</div>
+                    ${card.alt ? `<div class="rc-m">${champDisplayName(card.alt.champion)} is outside your pool but clearly better here.</div>` : ''}`;
+                el.style.display = '';
+            }
             function displayFilteredRecommendations() {
                 renderDraftProv();
                 const roleRateThreshold = parseFloat(roleRateFilter.value) || 0;
                 const baseWrThreshold = parseFloat(baseWrFilter.value) || 0;
                 const searchQuery = recommendationSearch.value.toLowerCase();
                 const favoritesOnly = favoritesOnlyToggle.checked;
-                const personalMap = getPersonalOffsets(currentDatasetSync()); // "You" column (separate from population stats)
-                lastRecommendations.forEach(pick => { const pi = personalMap && personalMap.get(pick.champion); pick.personal_offset = pi ? pi.offset : null; });
+                attachPersonal(lastRecommendations); // "For you" column and the decision card (your record + unfamiliarity)
 
                 const globallyFilteredRecs = lastRecommendations.filter(pick => {
                     const roleFreq = pick.role_frequency || 0;
@@ -4163,9 +4561,12 @@
                     }
                 });
 
+                renderDecisionCard(globallyFilteredRecs, pool);
                 recommendationList.innerHTML = '';
                 if (displayRecs.length === 0) {
-                    recommendationList.innerHTML = '<li>No champions meet the filter criteria.</li>';
+                    recommendationList.innerHTML = searchQuery.trim()
+                        ? `<li class="rec-hint">No champion here matches the search "<b>${bvEsc(recommendationSearch.value.trim())}</b>". <button class="rec-clear-search">Clear search</button></li>`
+                        : '<li>No champions meet the filter criteria.</li>';
                     return;
                 }
                 
@@ -4188,7 +4589,7 @@
                     const baseWrStr = (baseShrunk * 100).toFixed(2) + '%' + (baseLow ? '*' : '');
                     li.dataset.base = JSON.stringify({ raw: pick.base_win_rate, roleFreq: pick.role_frequency, shrunk: baseShrunk, sd: pick.base_win_rate_sd, games: pick.base_games, low: baseLow });
                     const roleFreqStr = (pick.role_frequency * 100).toFixed(1) + '%';
-                    const youStr = pick.personal_offset == null ? '' : fmtPersonalPct(pick.personal_offset);
+                    const youStr = pick.for_you == null ? '' : (pick.for_you * 100).toFixed(1) + '%';   // For you: Exp WR adjusted for your games on it
                     
                     const totalDeltaVal = pick.total_delta * 100;
                     const totalDeltaStr = (totalDeltaVal >= 0 ? '+' : '') + totalDeltaVal.toFixed(2);
@@ -4248,7 +4649,7 @@
                         <div class="detail-col rec-cell-stat ${enemyDeltaVal >= 0 ? 'delta-pos' : 'delta-neg'}">${enemyDeltaStr}</div>
                         <div class="rec-cell-stat base-cell${baseLow ? ' base-low' : ''}">${baseWrStr}${trendMark}</div>
                         <div class="detail-col rec-cell-stat">${roleFreqStr}</div>
-                        <div class="rec-cell-stat you-cell ${youStr ? (pick.personal_offset >= 0 ? 'delta-pos' : 'delta-neg') : ''}">${youStr}</div>
+                        <div class="rec-cell-stat you-cell ${youStr ? (pick.for_you >= 0.5 ? 'delta-pos' : 'delta-neg') : ''}">${youStr}</div>
                     `;
                     if (whyOpen.has(whyKey(pick.champion))) li.appendChild(buildWhyPanel(pick, trend));
                     recommendationList.appendChild(li);
@@ -4372,7 +4773,9 @@
                     const slot = suggestBtn.closest('.role-slot');
                     document.querySelectorAll('.role-slot').forEach(s => s.classList.remove('selected'));
                     slot.classList.add('selected');
+                    const newTarget = !recommendationTarget || recommendationTarget.side !== slot.dataset.side || recommendationTarget.role !== slot.dataset.role;
                     recommendationTarget = { side: slot.dataset.side, role: slot.dataset.role };
+                    if (newTarget) recommendationSearch.value = '';   // a search typed for another slot would hide this one's list
                     updateRecommendations();
                     drawConnector(slot);
                 } else if (lockBtn) {
@@ -4387,6 +4790,27 @@
                 }
             });
 
+            function clearDraftSlots(slots) {
+                let n = 0;
+                for (const [side, role] of slots) {
+                    const s = document.querySelector(`[data-side='${side}'][data-role='${role}']`);
+                    if (s && (s.dataset.champion || s.dataset.hover)) { setChampionForSlot(side, role, null); delete s.dataset.hover; n++; }
+                }
+                if (!n) return 0;
+                refreshUnavailableChampions();
+                updateRecommendations();
+                updateAnalysisView();
+                return n;
+            }
+            window.DD.clearSlot = (side, role) => clearDraftSlots([[side, role]]);
+            window.DD.clearTeam = side => clearDraftSlots(roles.map(r => [side, r]));
+            window.DD.resetDraft = () => { resetDraft(); updateAnalysisView(); };
+            draftArea.addEventListener('click', e => {
+                const b = e.target.closest('.team-clear');
+                if (!b) return;
+                e.stopPropagation();
+                window.DD.clearTeam(b.dataset.clearSide);
+            }, true);
             draftArea.addEventListener('contextmenu', e => {
                 e.preventDefault();
                 const roleSlot = e.target.closest('.role-slot');
@@ -4445,6 +4869,8 @@
                 }
                 const roleRate = (parseFloat(roleRateFilter.value) || 0) / 100, baseMin = (parseFloat(baseWrFilter.value) || 0) / 100;
                 const pool = myPoolToggle.checked ? myPoolSet() : null;
+                attachPersonal(picks);
+                const mine = personalRaw ? decisionCard(picks.filter(p => (p.role_frequency || 0) >= roleRate), myPoolSet()) : null;
                 const rows = picks
                     .filter(p => (p.role_frequency || 0) >= roleRate && (p.base_win_rate_shrunk ?? p.base_win_rate ?? 0) >= baseMin && !unavailableChampions.has(p.champion) && (!pool || pool.has(p.champion)))
                     .sort((a, b) => (b.exp_wr || 0) - (a.exp_wr || 0)).slice(0, 6)
@@ -4461,7 +4887,12 @@
                 return {
                     mode: 'sr', title: `${target.side === 'right' ? 'Enemy ' : ''}${MINI_ROLE[target.role]}${recommendationTarget ? '' : ' (your lane)'}`,
                     sub: [opp ? `vs ${champDisplayName(opp)}` : 'lane opponent not picked yet', picked ? `picked: ${champDisplayName(picked)}` : null, dataLabel].filter(Boolean).join(' · '),
-                    rows, empty: 'No champion passes the filters.'
+                    rows, empty: 'No champion passes the filters.',
+                    // the decision card: your best picks with a one-line reason each (only for your own side)
+                    card: target.side === 'left' && mine && mine.top.length ? [...mine.top, ...(mine.alt ? [mine.alt] : [])].map(p => {
+                        const c = allChampions.find(x => x.id === p.champion);
+                        return { id: p.champion, name: c ? c.name : p.champion, img: c && latestPatch ? `${DDRAGON_BASE_URL}/cdn/${latestPatch}/img/champion/${c.image.full}` : '', wr: p.for_you, why: pickReasons(p), alt: p === mine.alt };
+                    }) : null
                 };
             };
             // A row clicked in the mini window: show it in the draft with its "why" panel open
@@ -5155,6 +5586,7 @@
                     return;
                 }
                 lastTimePeriod = timePeriodSelect.value;
+                wantedTimePeriod = null;   // picked by hand (or restored): stop waiting for the saved one
                 handleFilterChange();
             });
             rankSelect.addEventListener('change', rebuildTimePeriodOptions); // saved/combined periods depend on the rank; runs before the handler below
@@ -5221,6 +5653,13 @@
             resetBtn.addEventListener('click', resetDraft);
             
             recommendationSearch.addEventListener('input', displayFilteredRecommendations);
+            recommendationList.addEventListener('click', e => {
+                if (!e.target.closest('.rec-clear-search')) return;
+                e.stopPropagation();
+                recommendationSearch.value = '';
+                displayFilteredRecommendations();
+                recommendationSearch.focus();
+            }, true);
             
             function hideBansView() { bansTabBtn.classList.remove('active'); bansView.style.display = 'none'; }
             // Duo tab (duo-view.js draws it): shown like the other tabs; any other tab hides it
@@ -5580,6 +6019,10 @@
                 let want = [];
                 if (tp === 'patch') want = cur ? [cur] : [];
                 else if (isSavedPatchPeriod(tp)) want = [tp.slice(2)];
+                else if (tp === ADAPTIVE_PERIOD) {
+                    want = cur ? [cur] : [];
+                    if (want.length) notes.push(`Adaptive applies to the draft statistics; builds use patch ${want[0]}.`);
+                }
                 else if (isCombinedPeriod(tp)) {
                     // Every released patch in the range / the N newest from the current one (not the rank's LoLalytics archive)
                     const released = ddragonPatchLabels.length ? ddragonPatchLabels : (cur ? [cur] : []);
@@ -5739,6 +6182,7 @@
             window.DD.buildsTables = buildsSavedFor;
             // Pure helpers, exposed for tests: patch span labels, day windows as patches, and the pooled-PP maths (D3)
             window.DD.patchLabels = { range: patchRangeLabel, missingIn: patchesMissingIn, missingNote: patchMissingNote, dayPatches: dayPeriodPatches };
+            window.DD.adaptive = { patches: adaptivePatches, championStats: adaptiveChampionStats, poolCols: poolColsAdaptive, toCols: matchupsToCols, toMap: colsToMap, load: getDataset, MIN: ADAPTIVE_MIN };
             window.DD.buildsMath = { combineBuilds, bvPP, bvBetweenVar };
             window.DD.buildsSummary = async (champion, role) => {
                 const s = await buildsSavedFor(champion, role);
@@ -6489,6 +6933,7 @@
                 if (!li || !li.dataset.championName) return;
                 if (li.classList.contains('unavailable')) return;
                 setChampionForSlot(recommendationTarget.side, recommendationTarget.role, li.dataset.championName);
+                recommendationSearch.value = '';   // the search found this pick; don't let it filter the next slot's list
                 refreshUnavailableChampions();
                 updateRecommendations();
                 updateAnalysisView();
@@ -6841,7 +7286,8 @@
             // with exactly the recommendations' per-pair shrinkage (pairEffect), so the hub and the draft always agree.
             // -> { label, roles:{ROLE:{wr, wrRaw, sd, games, pick, freq, trend}}, role, matchups:[...], synergies:{ROLE:[...]}, minGames, excluded }
             //    matchup / synergy row: { champion, name, games, raw, mean, sd, pp, exp, share }  (share = how often it is played in that role)
-            window.DD.championData = async (champ, role) => {
+            // vs (optional): one lane opponent for the matchup page -> out.vs (that row even below Min Games, flagged low) and out.vsBase
+            window.DD.championData = async (champ, role, vs = null) => {
                 const tp = timePeriodSelect.value, rank = rankSelect.value;
                 const ds = await getDataset(tp, rank, true);
                 if (!ds) return null;
@@ -6876,6 +7322,18 @@
                     if (r === role0) { const m = row(item.champion, r, 'enemy'); if (m) out.matchups.push(m); else out.excluded++; }
                     else { const s = row(item.champion, r, 'teammate'); if (s) (out.synergies[r] = out.synergies[r] || []).push(s); }
                 }
+                if (vs) {
+                    const listed = out.matchups.find(x => x.champion === vs);
+                    if (listed) out.vs = { ...listed, low: false };
+                    else {
+                        const keep = opts.minGames; opts.minGames = 0;
+                        const m = row(vs, role0, 'enemy');
+                        opts.minGames = keep;
+                        out.vs = m ? { ...m, low: true } : null;
+                    }
+                    const o = ratings.get(`${vs},${role0}`);
+                    out.vsBase = o ? { wr: o.win_rate_shrunk ?? o.win_rate, games: o.games || 0 } : null;
+                }
                 return out;
             };
             // Duo synergy (duo-view.js): champion pairs for two lanes of the left team, ranked by
@@ -6883,13 +7341,15 @@
             // which is exactly how the draft verdict counts an ally pair (half of each direction, sample-size adjusted). Each Exp WR
             // is the recommendations' number in the current draft with the other duo slot left empty. Picked / banned champions are
             // left out. pools: arrays of champion ids (null = everyone played in that role 5%+ of the time).
-            window.DD.duoPairs = async ({ roleA, roleB, poolA = null, poolB = null, perSide = 12, limit = 15 } = {}) => {
+            // blank: an empty board (the Premades page), instead of the current draft
+            window.DD.duoPairs = async ({ roleA, roleB, poolA = null, poolB = null, perSide = 12, limit = 15, blank = false } = {}) => {
                 if (!roles.includes(roleA) || !roles.includes(roleB) || roleA === roleB) return null;
                 const tp = timePeriodSelect.value, rank = rankSelect.value;
                 const ds = await getDataset(tp, rank, true);
                 if (!ds) return null;
                 attachReferencePrior(ds, tp, rank);
                 const my = getTeamForAPI('left'), enemy = getTeamForAPI('right');
+                if (blank) for (const r of roles) { my[r] = null; enemy[r] = null; }
                 my[roleA] = null; my[roleB] = null;
                 const opts = { minGames: parseInt(minGamesFilter.value) || 0, refPrior: borrowStrength && ds.ref_prior ? ds.ref_prior : null, tau2ByClass: ds.prior_tau2_by_class || {}, tau2Pooled: ds.prior_tau2 ?? PP_DEFAULT_TAU ** 2 };
                 const side = (role, pool) => getRecommendations(my, enemy, role, ds)
@@ -6907,6 +7367,98 @@
                 pairs.sort((x, y) => y.edge - x.edge);
                 return { label: `${periodLabel(tp)} · ${RANKS[rank] || rank}`, roleA, roleB, candidatesA: A.length, candidatesB: B.length, pairs: pairs.slice(0, limit),
                     bestSynergy: pairs.filter(p => p.synGames > 0).sort((x, y) => y.syn - x.syn).slice(0, 5), draftPicks: Object.values(my).filter(Boolean).length + Object.values(enemy).filter(Boolean).length };
+            };
+            // Premades (premades-view.js), all on an empty board with the selected Time Period / Rank:
+            // duoPairDetail: one champion pair of the same team in two roles -> both champions' numbers, the synergy in each direction,
+            //   the pair's own games in the dataset, pair edge (as duoPairs), each one's best / worst lane opponents, and the
+            //   champions in the other roles that go best with both (for a third player).
+            // stackCombos: champion combos for 2-5 players, ranked by
+            //   team edge = sum of (Exp WR - 50%) + for every two players ½ (Δ A-with-B + Δ B-with-A)
+            //   slots: [{ role, pool }] (pool: champion ids; empty / null = everyone played there 5%+), each keeping its best candidates.
+            const blankBoard = () => { const my = {}, enemy = {}; for (const r of roles) { my[r] = null; enemy[r] = null; } return { my, enemy }; };
+            const pairOptsOf = (ds, minGames) => ({ minGames: minGames ?? (parseInt(minGamesFilter.value) || 0), refPrior: borrowStrength && ds.ref_prior ? ds.ref_prior : null, tau2ByClass: ds.prior_tau2_by_class || {}, tau2Pooled: ds.prior_tau2 ?? PP_DEFAULT_TAU ** 2 });
+            const allySyn = (ds, a, ra, b, rb, opts) => {
+                const s1 = pairEffect(ds, a, ra, b, rb, 'teammate', opts), s2 = pairEffect(ds, b, rb, a, ra, 'teammate', opts);
+                const mean = ((s1 ? s1.mean : 0) + (s2 ? s2.mean : 0)) / 2, v = ((s1 ? s1.var : 0) + (s2 ? s2.var : 0)) / 4;
+                return { mean, sd: Math.sqrt(v), pp: v > 0 ? normalCdf(mean / Math.sqrt(v)) : null, games: Math.max(s1 ? s1.games : 0, s2 ? s2.games : 0), ab: s1, ba: s2 };
+            };
+            window.DD.duoPairDetail = async ({ a, roleA, b, roleB } = {}) => {
+                if (!a || !b || a === b || !roles.includes(roleA) || !roles.includes(roleB) || roleA === roleB) return null;
+                const tp = timePeriodSelect.value, rank = rankSelect.value;
+                const ds = await getDataset(tp, rank, true);
+                if (!ds) return null;
+                attachReferencePrior(ds, tp, rank);
+                const { my, enemy } = blankBoard(), opts = pairOptsOf(ds), loose = pairOptsOf(ds, 0);
+                const one = (id, role) => {
+                    const x = getRecommendations(my, enemy, role, ds).find(p => p.champion === id);
+                    const rt = ds.champion_ratings.get(`${id},${role}`) || {};
+                    const lane = [];
+                    for (const it of ds.champion_stats_list) {
+                        if (it.role.toUpperCase() !== role || it.champion === id || (it.pick_rate || 0) <= 0) continue;
+                        const pe = pairEffect(ds, id, role, it.champion, role, 'enemy', opts);
+                        if (pe) lane.push({ champion: it.champion, name: champDisplayName(it.champion), mean: pe.mean, games: pe.games });
+                    }
+                    lane.sort((p, q) => p.mean - q.mean);
+                    return { id, name: champDisplayName(id), role, exp: x ? x.exp_wr : null, expSd: x ? x.exp_wr_sd : null, base: rt.win_rate_shrunk ?? rt.win_rate ?? null, games: rt.games || 0,
+                        pick: rt.pick_rate || 0, worst: lane.slice(0, 3), best: lane.slice(-3).reverse() };
+                };
+                const A = one(a, roleA), B = one(b, roleB);
+                const syn = allySyn(ds, a, roleA, b, roleB, opts), each = allySyn(ds, a, roleA, b, roleB, loose);   // edge as duoPairs; each way also below Min Games
+                const st = ds.matchup_stats.get(JSON.stringify([a, roleA, b, roleB, 'teammate'])) || ds.matchup_stats.get(JSON.stringify([b, roleB, a, roleA, 'teammate']));
+                const thirds = [];
+                for (const it of ds.champion_stats_list) {
+                    const r = it.role.toUpperCase();
+                    if (r === roleA || r === roleB || it.champion === a || it.champion === b || (it.role_frequency || 0) < 0.05) continue;
+                    const sa = allySyn(ds, a, roleA, it.champion, r, opts), sb = allySyn(ds, b, roleB, it.champion, r, opts);
+                    if (!sa.games && !sb.games) continue;
+                    thirds.push({ champion: it.champion, name: champDisplayName(it.champion), role: r, syn: sa.mean + sb.mean, withA: sa.mean, withB: sb.mean, games: Math.min(sa.games, sb.games) });
+                }
+                thirds.sort((p, q) => q.syn - p.syn);
+                const edge = A.exp != null && B.exp != null ? (A.exp - 0.5) + (B.exp - 0.5) + syn.mean : null;
+                return { label: `${periodLabel(tp)} · ${RANKS[rank] || rank}`, a: A, b: B,
+                    syn: { mean: syn.mean, sd: syn.sd, pp: syn.pp, games: syn.games, ab: each.ab ? { raw: each.ab.raw, mean: each.ab.mean, games: each.ab.games } : null, ba: each.ba ? { raw: each.ba.raw, mean: each.ba.mean, games: each.ba.games } : null },
+                    pair: st ? { games: st.total_games || 0, wr: st.win_rate ?? null } : null, edge, thirds: thirds.slice(0, 8), minGames: opts.minGames };
+            };
+            window.DD.stackCombos = async ({ slots, perSide = 0, limit = 10 } = {}) => {
+                if (!Array.isArray(slots) || slots.length < 2 || slots.length > 5) return null;
+                const rs = slots.map(s => s && s.role);
+                if (rs.some(r => !roles.includes(r)) || new Set(rs).size !== rs.length) return null;
+                const tp = timePeriodSelect.value, rank = rankSelect.value;
+                const ds = await getDataset(tp, rank, true);
+                if (!ds) return null;
+                attachReferencePrior(ds, tp, rank);
+                const { my, enemy } = blankBoard(), opts = pairOptsOf(ds), n = slots.length;
+                const keep = perSide || [0, 0, 14, 9, 6, 5][n];
+                const open = [];   // slots whose pool had nobody in the dataset for that role: everyone played there instead
+                const cand = slots.map((s, i) => {
+                    const pool = s.pool && s.pool.length ? s.pool : null, all = getRecommendations(my, enemy, s.role, ds);
+                    let l = all.filter(p => (pool ? pool.includes(p.champion) : (p.role_frequency || 0) >= 0.05));
+                    if (!l.length && pool) { l = all.filter(p => (p.role_frequency || 0) >= 0.05); open.push(i); }
+                    return l.sort((x, y) => y.exp_wr - x.exp_wr).slice(0, keep).map(p => ({ id: p.champion, name: champDisplayName(p.champion), exp: p.exp_wr, best: null }));
+                });
+                // synergy of every two slots' candidates
+                const syn = {};
+                for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+                    const m = syn[`${i}|${j}`] = {};
+                    for (const x of cand[i]) for (const y of cand[j]) if (x.id !== y.id) { const s = allySyn(ds, x.id, rs[i], y.id, rs[j], opts); m[`${x.id}|${y.id}`] = { mean: s.mean, games: s.games }; }
+                }
+                const combos = [], pick = [];
+                const walk = (i, base) => {
+                    if (i === n) {
+                        const pairs = [];
+                        let s = 0;
+                        for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) { const v = syn[`${p}|${q}`][`${pick[p].id}|${pick[q].id}`]; pairs.push({ i: p, j: q, syn: v.mean, games: v.games }); s += v.mean; }
+                        const edge = base + s;
+                        combos.push({ champs: pick.map(c => c.id), names: pick.map(c => c.name), exp: pick.map(c => c.exp), syn: s, pairs, edge });
+                        pick.forEach(c => { if (c.best == null || edge > c.best) c.best = edge; });
+                        return;
+                    }
+                    for (const c of cand[i]) { if (pick.some(x => x.id === c.id)) continue; pick.push(c); walk(i + 1, base + c.exp - 0.5); pick.pop(); }
+                };
+                walk(0, 0);
+                combos.sort((x, y) => y.edge - x.edge);
+                return { label: `${periodLabel(tp)} · ${RANKS[rank] || rank}`, roles: rs, slots: cand.map((c, i) => ({ role: rs[i], candidates: c.slice().sort((x, y) => (y.best ?? -1) - (x.best ?? -1)) })),
+                    combos: combos.slice(0, limit), count: combos.length, open };
             };
             // --- Workflow hooks (workflow.js, tierlist.js): read / restore the draft tab and the Builds selection, champion select
             // state for the game flow bar, the post-lock-in game plan, one-click "send everything", and the tier list's data.
@@ -7017,6 +7569,7 @@
                 const tp = timePeriodSelect.value, rank = rankSelect.value;
                 const ds = await getDataset(tp, rank, true);
                 if (!ds) return null;
+                const trend = await ensurePatchTrend(`${tp}|${rank}`); // complete before the rows read it
                 const rows = [], sums = {};
                 for (const item of ds.champion_stats_list) {
                     const r = item.role.toUpperCase(), x = ds.champion_ratings.get(`${item.champion},${r}`);
@@ -7026,11 +7579,32 @@
                     const s = sums[r] = sums[r] || { w: 0, g: 0 }; s.w += wr * (x.games || 0); s.g += x.games || 0;
                 }
                 const mean = {}; for (const [r, s] of Object.entries(sums)) mean[r] = s.g ? s.w / s.g : 0.5;
-                return { label: `${periodLabel(tp)} · ${RANKS[rank] || rank}`, games: ds.total_games, rows, mean, trendReady: patchTrendCache.get(trendKey()) !== undefined && patchTrendCache.get(trendKey()) !== null };
+                return { label: `${periodLabel(tp)} · ${RANKS[rank] || rank}`, games: ds.total_games, rows, mean, trendReady: !!trend, prevPatch: trend ? trend.prevPatch : null };
             };
             window.DD.myPool = () => { const s = myPoolSet(); return s ? [...s] : null; };
             window.DD.liveLane = () => liveMyRole;
             window.DD.openChampion = (champ, role) => { if (window.DDHub) window.DDHub.open(champ, role); };
+            // the patches the selected Time Period covers ('16.20', ...), for views that filter your own games by it (Premades)
+            window.DD.periodPatches = () => {
+                const tp = timePeriodSelect.value || 'patch';
+                const list = dayPeriodDays(tp) ? dayPeriodPatches(tp) : periodPatches(tp, rankSelect.value);
+                return { patches: list && list.length ? list.slice() : (currentPatchLabel() ? [currentPatchLabel()] : []), label: tp === 'patch' ? `Patch ${currentPatchLabel()}` : periodLabel(tp) };
+            };
+            // the matchup page: champion page of `champ` in `role`, on its "vs" tab against `vs`
+            window.DD.openMatchup = (champ, role, vs) => { if (window.DDHub) window.DDHub.open(champ, role, { vs }); };
+            // Your own notes per matchup ("Ahri|Zed"), kept in settings.json; shown on the matchup page and in the game plan
+            let matchupNotesCache = null;
+            window.DD.matchupNotes = async () => {
+                if (!matchupNotesCache) { try { const s = await window.electronAPI.getSettings(); matchupNotesCache = (s && s.matchupNotes && typeof s.matchupNotes === 'object') ? s.matchupNotes : {}; } catch (e) { matchupNotesCache = {}; } }
+                return matchupNotesCache;
+            };
+            window.DD.matchupNote = (champ, vs) => (matchupNotesCache && matchupNotesCache[`${champ}|${vs}`]) || null;
+            window.DD.setMatchupNote = async (champ, vs, text) => {
+                const n = await window.DD.matchupNotes(), k = `${champ}|${vs}`, t = String(text || '').slice(0, 2000);
+                if (t.trim()) n[k] = { text: t, at: Date.now() }; else delete n[k];
+                await window.DD.patchSettings({ matchupNotes: n });
+            };
+            window.DD.matchupNotes().catch(() => {});
             window.DD.draftProv = () => draftProvInfo();   // the draft data-source chip, for other views
             // Shared surface for the feature scripts (profile-view.js, aram-view.js), which live outside this closure.
             Object.assign(window.DD, {
@@ -7045,7 +7619,7 @@
         // window.DD: view switching shared by the draft UI and the feature views. Views: 'draft' (Summoner's Rift draft, the
         // default), 'profile', 'aram', 'arena', ... Feature scripts listen with DD.onView(fn) and wait for DD.ready before using champion data.
         (function () {
-            const views = { draft: 'draft-area', profile: 'profile-root', aram: 'aram-root', arena: 'arena-root', builds: 'builds-root', champion: 'champion-root', tierlist: 'tierlist-root', scout: 'scout-root', dodgeball: 'dodgeball-root' };
+            const views = { draft: 'draft-area', profile: 'profile-root', aram: 'aram-root', arena: 'arena-root', builds: 'builds-root', champion: 'champion-root', tierlist: 'tierlist-root', scout: 'scout-root', premades: 'premades-root', dodgeball: 'dodgeball-root' };
             const listeners = [];
             let current = 'draft', readyResolve, settingsQueue = Promise.resolve();
             window.DD = {
@@ -7164,6 +7738,8 @@
     <script src="tierlist.js"></script> <!-- Summoner's Rift tier list (view "tierlist") -->
     <script src="pool-planner.js"></script> <!-- champion pool planner (Tier list > Pool planner, DDPool) -->
     <script src="multisearch.js"></script> <!-- multi-search (view "scout") -->
+    <script src="premades-view.js"></script> <!-- premades (view "premades") -->
+    <script src="patch-day.js"></script> <!-- patch day: what the new patch did to your champions (once per patch) -->
     <script src="onboarding.js"></script> <!-- first-run setup check (DD.onboarding; also in Settings and Ctrl+K) -->
     <script src="workflow.js"></script> <!-- back / forward, champion menu, game flow bar, game plan, send to client -->
     <script src="notifications.js"></script> <!-- in-app toasts (and optional Windows notifications) for real events: DD.notify -->

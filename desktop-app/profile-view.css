@@ -367,13 +367,26 @@
 #profile-root .pf-rv-col { flex: 1 1 320px; min-width: 0; }
 #profile-root .pf-rv-lane td, #profile-root .pf-rv-lane th { font-variant-numeric: tabular-nums; }
 #profile-root .pf-rv-swings { margin: 4px 0 8px; padding-left: 18px; font-size: 12.5px; }
-#profile-root .pf-rv-map { display: block; background: #0b1220; border-radius: 6px; border: 1px solid var(--border-color); }
-#profile-root .pf-rv-map .d path { stroke: var(--red-neg); stroke-width: 2.4; stroke-linecap: round; }
-#profile-root .pf-rv-map circle.k { fill: var(--accent-color); stroke: #fff; stroke-width: .8; }
-#profile-root .pf-rv-map circle.a { fill: var(--accent-color); opacity: .6; }
+#profile-root .pf-rv-map { display: block; width: 100%; max-width: 480px; height: auto; aspect-ratio: 1; background: #0b1220; border-radius: 6px; border: 1px solid var(--border-color); }
+#profile-root .pf-rv-mapcol { flex: 1 1 480px; }
+#profile-root .pf-rv-map .d path { stroke: var(--red-neg); stroke-width: 3.2; stroke-linecap: round; }
+#profile-root .pf-rv-map .k circle:not(.hit) { fill: var(--accent-color); stroke: #fff; stroke-width: 1.2; }
+#profile-root .pf-rv-map .a circle:not(.hit) { fill: var(--accent-color); opacity: .6; }
+#profile-root .pf-rv-map .hit { fill: transparent; stroke: none; pointer-events: all; }
+#profile-root .pf-rv-mk { cursor: help; }
+#profile-root .pf-rv-mk.go { cursor: pointer; }
+#profile-root .pf-rv-mk.on .hit { fill: rgba(255, 255, 255, 0.18); stroke: #fff; stroke-width: 1; }
+#profile-root .pf-rv-mapwrap { position: relative; }
+#profile-root .pf-rv-tip { position: absolute; z-index: 5; pointer-events: none; max-width: 240px; padding: 4px 8px; border-radius: 6px; font-size: 12px; line-height: 1.35;
+    background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); }
 #profile-root .pf-rv-mapwrap .pf-muted { margin-top: 6px; font-size: 12px; }
 #profile-root .pf-rv-items { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 6px; }
 #profile-root .pf-rv-item { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; color: var(--text-secondary); }
 #profile-root .pf-rv-good { color: var(--green-pos); font-size: 10.5px; }
 #profile-root .pf-rv-bad { color: var(--red-neg); font-size: 10.5px; }
 #profile-root .pf-rv-note { font-size: 12.5px; margin: 4px 0; }
+/* replay review */
+.pf-rv-replay { margin-top: 6px; }
+.pf-rv-deaths { margin: 6px 0; padding-left: 18px; font-size: 0.85rem; }
+.pf-rv-deaths li { margin: 3px 0; }
+.pf-rv-deaths .pf-btn { margin-left: 6px; }

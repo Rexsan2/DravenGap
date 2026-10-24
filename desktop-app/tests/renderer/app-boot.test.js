@@ -57,6 +57,7 @@ app.whenReady().then(async () => {
             if (u.hostname === 'ddragon.leagueoflegends.com') return cb({ redirectURL: `http://127.0.0.1:${port}/dd${u.pathname}` });
             cb({ cancel: true });
         });
+        process.env.DG_NO_TRAY = '1';
         require(APP + 'main.js');
         let w = null;
         for (let i = 0; i < 100 && !w; i++) { await new Promise(r => setTimeout(r, 100)); w = alive()[0] || null; }

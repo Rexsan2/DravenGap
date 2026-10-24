@@ -41,6 +41,20 @@ const { start } = require('../lib/riot-stub');
     assert(Object.values(r.partnerChamps.JUNGLE).reduce((a, b) => a + b, 0) === 45, 'partner champions per lane');
     r = await call('duo-history', { owner: { puuid }, partner: { gameName: 'Foxtrot', tagLine: 'EUW' } }); assert(r.ok && r.games === 0, 'enemy team does not count');
     r = await call('duo-history', { owner: { puuid }, partner: { gameName: '' } }); assert(!r.ok && r.code === 'BAD_INPUT');
+    // Time Period filter (Premades): only games of those patches; bad labels are ignored (= every game)
+    r = await call('duo-history', { owner: { puuid }, partner: { gameName: 'alpha', tagLine: 'euw' }, patches: ['99.99'] }); assert(r.ok && r.games === 0, 'no games in another patch');
+    r = await call('duo-history', { owner: { puuid }, partner: { gameName: 'alpha', tagLine: 'euw' }, patches: ['x'] }); assert(r.ok && r.games === 45, 'a bad label is no filter');
+    r = await call('played', { puuid, platform: 'EUW1', group: 'all', patches: ['99.99'] }); assert(r.ok && r.list.length === 0 && r.scanned === 0, 'played: nothing in another patch');
+    r = await call('played', { puuid, platform: 'EUW1', group: 'all' }); assert(r.ok && r.list.some(x => x.name === 'Alpha') && r.scanned === 45, 'played: every game without a filter');
     console.log('duo history ok');
+    // several premades at once: games with ALL of them on your team (Foxtrot is always on the other team)
+    r = await call('group-history', { owner: { puuid }, partners: [{ gameName: 'alpha', tagLine: 'euw' }] });
+    assert(r.ok && r.games === 45 && r.w === 30 && r.combos[0].champs.length === 2 && r.combos.reduce((t, c) => t + c.games, 0) === 45, JSON.stringify(r).slice(0, 300));
+    assert.deepStrictEqual(r.lineups, [{ pos: ['TOP', 'JUNGLE'], games: 45, w: 30 }]);
+    r = await call('group-history', { owner: { puuid }, partners: [{ gameName: 'Alpha', tagLine: 'EUW' }, { gameName: 'Foxtrot', tagLine: 'EUW' }] });
+    assert(r.ok && r.games === 0 && r.scanned === 45, 'every partner must be on your team');
+    r = await call('group-history', { owner: { puuid }, partners: [{ gameName: 'alpha', tagLine: 'euw' }], patches: ['99.99'] }); assert(r.ok && r.games === 0, 'Time Period filter');
+    r = await call('group-history', { owner: { puuid }, partners: [] }); assert(!r.ok && r.code === 'BAD_INPUT', 'no partners');
+    console.log('group history ok');
     S.srv.close(); console.log('ALL OK'); process.exit(0);
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

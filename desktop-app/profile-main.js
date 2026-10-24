@@ -20,6 +20,8 @@
 //   profile:session   ()                                  -> { ok, lcu, games today [{q,champId,win,k,d,a,at,dur}], w, l, lp:{queueType:delta} }   (client match history; no Riot requests)
 //   profile:duo       ()                                  -> { ok, lcu, inLobby, partners:[{gameName,tagLine,positions,assigned,championId}], me:{...,positions,assigned} }  (client lobby; no Riot requests)
 //   profile:duo-history ({owner, partner:{gameName,tagLine}}) -> { ok, games, w, pairs:[{mine,theirs,games,w,myPos,theirPos}], lanes[], partnerChamps:{POS:{champId:n}} }  (cached games only)
+//   profile:group-history ({owner, partners:[{gameName,tagLine}] (1-4), patches}) -> games with ALL of them on your team:
+//                         { ok, scanned, games, w, combos:[{champs:[you, ...partners], pos:[...], games, w}], lineups:[{pos:[...], games, w}] }  (cached games only)
 //   profile:champ-summary ({champId, puuid | gameName,tagLine,platform}) -> { ok, puuid, games, w, k, d, a, cs, mins, kp, roles, queues,
 //                     last[10], score, mvp, ace, items:{POS:{games, freq:{itemId:n}}}, itemGames, curve, vsOpp:{champId:{g,w}} }   (cached games only; items and lane opponents of the newest 60)
 //   profile:insights  ({puuid,group,champId?})            -> { ok, ...profile-insights.js result, scanned }  (cached games only; no requests; group 'arena' -> { ok, n, arena:{avgPlace,top4,dist,champions,...}, scanned })
@@ -284,10 +286,78 @@ function register(deps) {
         };
     }
 
+    // ---------- no Riot key: your own profile from the League client ----------
+    // Without a key Riot can't be asked, but the client knows its own account: rank (ranked-stats), mastery, and your last 100 games
+    // (/lol-match-history: the list, then each game with all ten players). They are stored like client-recorded games (match.src
+    // 'lcu', the player's `lcu` list), so the match list, Insights, Premades and My stats read them as usual. Only your own account;
+    // other players still need a key. The player id is your API puuid when it is known from earlier, else the client's own puuid.
+    const CLIENT_HISTORY_MS = 2 * 60e3;
+    async function keylessOwner(gameName, tagLine, platform) {
+        if (getRiotApiKey()) return null;
+        const me = await getMe().catch(() => null);
+        if (!me || !me.lcuPuuid || !me.platform) return null;
+        if (gameName != null && !sameId(me, gameName, tagLine, platform)) return null;
+        const puuid = (await ownerApiPuuid(me)) || me.lcuPuuid;
+        cache.setMeta('puuid:' + puuid, { gameName: me.gameName, tagLine: me.tagLine, platform: me.platform });
+        rememberIdent(puuid, me.gameName, me.tagLine, me.platform);
+        return { me, puuid };
+    }
+    async function importClientHistory(me, puuid, force) {
+        const doc = cache.player(puuid);
+        if (!force && doc.lcuHistAt && Date.now() - doc.lcuHistAt < CLIENT_HISTORY_MS) return 0;
+        const list = await lcu.get('/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=100').catch(() => null);
+        const games = (list && list.games && list.games.games) || [];
+        let added = 0;
+        for (const g of games) {
+            const id = `${me.platform}_${g.gameId}`;
+            if (doc.rows[id] && (doc.lcu || []).includes(id)) continue;
+            const full = await lcu.get(`/lol-match-history/v1/games/${g.gameId}`).catch(() => null);
+            if (!full || !Array.isArray(full.participants) || !full.participants.length) continue;
+            const raw = C.lcuGameToMatch(full, { platform: me.platform, ownerLcuPuuid: me.lcuPuuid, ownerApiPuuid: puuid });
+            const cm = raw && compactOf(raw);
+            if (!cm || !C.findMe(cm, puuid)) continue;
+            await cache.putMatch(cm.id, raw);
+            noteRow(puuid, cm);
+            doc.lcu = [cm.id, ...(doc.lcu || []).filter(x => x !== cm.id)];
+            added++;
+        }
+        doc.lcu = (doc.lcu || []).slice(0, 600);
+        doc.lcuHistAt = Date.now();
+        cache.savePlayer(puuid);
+        return added;
+    }
+    async function keylessProfile(k) {
+        const { me, puuid } = k;
+        const [rs, mastery] = await Promise.all([
+            me.lcuPuuid ? lcu.get(`/lol-ranked/v1/ranked-stats/${me.lcuPuuid}`).catch(() => null) : null,
+            lcu.get('/lol-champion-mastery/v1/local-player/champion-mastery').catch(() => null)
+        ]);
+        cache.setMeta('sum:' + puuid, { profileIconId: me.profileIconId, summonerLevel: me.summonerLevel, revisionDate: Date.now() });
+        if (rs && rs.queues) { cache.setMeta('lg:' + puuid, C.lcuRankedToEntries(rs)); noteLcuPrev(puuid, rs); }
+        if (Array.isArray(mastery)) cache.setMeta('ms:' + puuid, mastery.slice().sort((a, b) => (b.championPoints || 0) - (a.championPoints || 0)).slice(0, 10));
+        const acct = { puuid, gameName: me.gameName, tagLine: me.tagLine };
+        return { ok: true, profile: { ...buildProfile(acct, me.platform, me), keyless: true }, stale: false };
+    }
+    async function keylessMatches(k, a) {
+        const { me, puuid } = k;
+        await importClientHistory(me, puuid, !!a.refresh);
+        const group = C.QUEUE_GROUPS[a.group] ? a.group : 'all';
+        const start = Math.max(0, parseInt(a.start, 10) || 0), champId = champOf(a.champId);
+        const doc = cache.player(puuid), ident = identOf(puuid);
+        const ids = (doc.lcu || []).filter(id => { const r = doc.rows[id]; return r && C.inGroup(group, r.q) && (!champId || r.c === champId); })
+            .sort((x, y) => doc.rows[y].end - doc.rows[x].end);
+        const rows = [];
+        for (const id of ids.slice(start, start + PAGE)) { const raw = await cache.getMatch(id), cm = raw && compactOf(raw); if (cm) rows.push(C.forViewer(cm, puuid, ident)); }
+        return { ok: true, puuid, group, champId, start, nextStart: start + PAGE, hasMore: start + PAGE < ids.length, matches: rows, stale: false, keyless: true,
+            warning: null, note: 'No Riot API key: your games come from the League client (its last 100 games, kept here as they arrive). Looking up other players needs a key.' };
+    }
+
     handle('lookup', async a => {
         const gameName = String(a.gameName || '').trim(), tagLine = String(a.tagLine || '').trim().replace(/^#/, '');
         if (!gameName || !tagLine) throw new ProfileError('BAD_INPUT', 'Enter a Riot ID like Name#TAG.');
         const platform = normPlatform(a.platform);
+        const kl = await keylessOwner(gameName, tagLine, platform);
+        if (kl) return keylessProfile(kl);
         const me = await getMe();
         let acct = await getAccount(gameName, tagLine, platform, { force: !!a.force });
         const st = partState(acct.puuid);
@@ -382,6 +452,10 @@ function register(deps) {
 
     handle('matches', async a => {
         const platform = normPlatform(a.platform);
+        if (!getRiotApiKey()) {   // no key: your own games from the client (other players need a key)
+            const kl = await keylessOwner(null, null, platform);
+            if (kl && kl.puuid === cleanPuuid(a.puuid)) return keylessMatches(kl, a);
+        }
         return withRecovery(cleanPuuid(a.puuid), platform, puuid => matchesFor(puuid, platform, a));
     });
     async function matchesFor(puuid, platform, a) {
@@ -488,18 +562,22 @@ function register(deps) {
 
     // teammates seen in >= 2 cached games (cache only, no Riot requests)
     const playedMemo = new Map();
+    // optional patch filter for the Premades view (the Time Period's patches): ['16.20', '16.19'] or null for every saved game
+    const patchSet = v => { const l = Array.isArray(v) ? v.filter(x => /^\d+\.\d+$/.test(String(x))).map(String) : []; return l.length ? new Set(l) : null; };
     handle('played', async a => {
         const puuid = cleanPuuid(a.puuid);
         const group = C.QUEUE_GROUPS[a.group] ? a.group : 'all';
         const doc = cache.peekPlayer(puuid);
         if (!doc) return { ok: true, list: [], scanned: 0 };
         const rows = Object.values(doc.rows).filter(r => !r.rm && C.inGroup(group, r.q)).sort((x, y) => y.end - x.end).slice(0, 400);
-        const key = `${puuid}|${group}|${rows.length}|${rows[0] ? rows[0].id : ''}`;
+        const only = patchSet(a.patches);
+        const key = `${puuid}|${group}|${rows.length}|${rows[0] ? rows[0].id : ''}|${only ? [...only].join(',') : ''}`;
         if (playedMemo.has(key)) return playedMemo.get(key);
         const cms = new Array(rows.length).fill(null);
         await pool(rows, 6, async (r, i) => { const raw = await cache.getMatch(r.id); if (raw) cms[i] = compactOf(raw); });
         const got = cms.filter(Boolean);
-        const out = { ok: true, list: C.playedWith(got, puuid, identOf(puuid), 2).slice(0, 12), scanned: got.length };
+        const inPatch = only ? got.filter(cm => only.has(cm.patch)) : got;
+        const out = { ok: true, list: C.playedWith(inPatch, puuid, identOf(puuid), 2).slice(0, 12), scanned: inPatch.length };
         playedMemo.clear(); playedMemo.set(key, out);
         return out;
     });
@@ -601,9 +679,9 @@ function register(deps) {
         const cms = new Array(rows.length).fill(null);
         await pool(rows, 6, async (r, i) => { const raw = await cache.getMatch(r.id); if (raw) cms[i] = compactOf(raw); });
         const out = { ok: true, puuid, scanned: 0, games: 0, w: 0, pairs: [], lanes: [], partnerChamps: {} };
-        const pairs = new Map(), lanes = new Map();
+        const pairs = new Map(), lanes = new Map(), only = patchSet(a.patches);
         for (const cm of cms) {
-            if (!cm || cm.remake) continue;
+            if (!cm || cm.remake || (only && !only.has(cm.patch))) continue;
             out.scanned++;
             const me = C.findMe(cm, puuid, identOf(puuid));
             if (!me) continue;
@@ -620,6 +698,42 @@ function register(deps) {
         }
         out.pairs = [...pairs.values()].sort((x, y) => y.games - x.games || y.w - x.w).slice(0, 20);
         out.lanes = [...lanes.values()].sort((x, y) => y.games - x.games);
+        return out;
+    });
+
+    // your games with several premades at once (Premades stack planner): every partner on your team
+    handle('group-history', async a => {
+        const o = a.owner || {};
+        let puuid = o.puuid && PUUID_RE.test(String(o.puuid)) ? String(o.puuid) : null;
+        if (!puuid) {
+            const g = String(o.gameName || '').trim(), t = String(o.tagLine || '').trim().replace(/^#/, '');
+            if (!g || !t) throw new ProfileError('BAD_INPUT', 'No account to read.');
+            puuid = await resolvePuuid(g, t, normPlatform(o.platform));
+        }
+        const want = (Array.isArray(a.partners) ? a.partners : []).slice(0, 4).map(p => ({ g: String(p && p.gameName || '').trim().toLowerCase(), t: String(p && p.tagLine || '').trim().replace(/^#/, '').toLowerCase() })).filter(p => p.g);
+        if (!want.length) throw new ProfileError('BAD_INPUT', 'No partners.');
+        const doc = cache.peekPlayer(puuid);
+        const rows = doc ? Object.values(doc.rows).filter(r => !r.rm && !C.isExcludedFromAll(r.q)).sort((x, y) => y.end - x.end).slice(0, 400) : [];
+        const cms = new Array(rows.length).fill(null);
+        await pool(rows, 6, async (r, i) => { const raw = await cache.getMatch(r.id); if (raw) cms[i] = compactOf(raw); });
+        const out = { ok: true, puuid, scanned: 0, games: 0, w: 0, combos: [], lineups: [] };
+        const combos = new Map(), lineups = new Map(), only = patchSet(a.patches);
+        for (const cm of cms) {
+            if (!cm || cm.remake || (only && !only.has(cm.patch))) continue;
+            out.scanned++;
+            const me = C.findMe(cm, puuid, identOf(puuid));
+            if (!me) continue;
+            const mates = want.map(w => cm.players.find(p => p !== me && p.team === me.team && String(p.name || '').toLowerCase() === w.g && (!w.t || String(p.tag || '').toLowerCase() === w.t)));
+            if (mates.some(m => !m)) continue;
+            out.games++; if (me.win) out.w++;
+            const all = [me, ...mates], ck = all.map(p => `${p.champId}@${p.pos || ''}`).join('|'), lk = all.map(p => p.pos || '').join('|');
+            const c = combos.get(ck) || { champs: all.map(p => p.champId), pos: all.map(p => p.pos || ''), games: 0, w: 0 };
+            c.games++; if (me.win) c.w++; combos.set(ck, c);
+            const l = lineups.get(lk) || { pos: all.map(p => p.pos || ''), games: 0, w: 0 };
+            l.games++; if (me.win) l.w++; lineups.set(lk, l);
+        }
+        out.combos = [...combos.values()].sort((x, y) => y.games - x.games || y.w - x.w).slice(0, 30);
+        out.lineups = [...lineups.values()].sort((x, y) => y.games - x.games);
         return out;
     });
 
@@ -1179,6 +1293,21 @@ function register(deps) {
         for (const id of Object.keys(doc.rows)) { const raw = await cache.getMatch(id).catch(() => null); if (raw) raws.push(raw); }
         return updatePersonalHistoryMany(me.lcuPuuid, puuid, raws);
     }
+    // The owner's history without the League client (main.js get-personal-stats falls back to it, so "My pool", the "You" column
+    // and the pool planner work with the client closed): the owner's games in the Profile cache, converted like the backfill
+    // does, and the cached champion mastery. Owner = the last client account seen, else Settings > Default account. No requests.
+    ownerCachedGamesImpl = async () => {
+        const last = cache.getMeta('owner-last'), la = last && cleanAcct(last.data);
+        const acct = la ? { ...la, puuid: last.data.puuid } : settingsAccount();
+        if (!acct) return null;
+        const puuid = acct.puuid || cachedPuuid(acct.gameName, acct.tagLine, acct.platform) || knownPuuid(acct.gameName, acct.tagLine, acct.platform);
+        if (!puuid) return { games: [], mastery: {}, name: acct.gameName };
+        const doc = cache.peekPlayer(puuid);
+        const raws = [];
+        if (doc) for (const id of Object.keys(doc.rows)) { const raw = await cache.getMatch(id).catch(() => null); if (raw) raws.push(raw); }
+        const ms = cache.getMeta('ms:' + puuid);
+        return { games: raws.map(r => riotHistory.matchToGame(r, puuid)).filter(Boolean), mastery: lcuHistory.extractMastery(ms && ms.data), name: acct.gameName };
+    };
     async function refreshOwner() {
         if (!getRiotApiKey()) return { added: 0, skipped: 'no-key' };
         const me = await getMe();
@@ -1382,4 +1511,7 @@ function onRiotKeyChanged() {
 // Write the pending cache documents to disk (call before quitting).
 function flush() { if (activeCache) activeCache.flush(); }
 
-module.exports = { register, onRiotKeyChanged, flush };
+let ownerCachedGamesImpl = null;
+const ownerCachedGames = () => (ownerCachedGamesImpl ? ownerCachedGamesImpl() : Promise.resolve(null));
+
+module.exports = { register, onRiotKeyChanged, flush, ownerCachedGames };

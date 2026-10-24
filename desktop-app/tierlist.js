@@ -29,9 +29,9 @@
         try { d = DD.tierData ? await DD.tierData() : null; } catch (e) { d = { error: e.message }; }
         if (seq !== S.seq) return;
         S.data = d; S.loading = false; paint();
-        // patch trends load in the background the first time: read again once they are in
-        if (d && !d.error && !d.trendReady && !S.retried) { S.retried = true; setTimeout(() => { if (DD.currentView() === 'tierlist') load(); }, 1500); }
     }
+    // a patch saved (or downloaded) while the tier list is open can give it a previous patch: read again
+    window.addEventListener('dd:archive-changed', () => { if (DD.currentView && DD.currentView() === 'tierlist') load(); });
     function rows() {
         const d = S.data;
         if (!d || d.error) return [];

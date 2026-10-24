@@ -58,3 +58,9 @@
 #champion-root .ch-badge { font-style: normal; font-size: 0.68rem; font-weight: 700; padding: 0 5px; border-radius: 6px; background: #7c3aed; color: #fff; }
 #champion-root .coach { margin-top: 12px; }
 @media (max-width: 1100px) { #champion-root .ch-card.ch-wide { grid-column: auto; } }
+/* matchup page (vs tab) */
+#champion-root .ch-vs-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; font-size: 1.05rem; }
+#champion-root .ch-vs-head .ch-img { width: 40px; height: 40px; border-radius: 6px; }
+#champion-root .ch-vs-head .ch-btn { margin-left: auto; }
+#champion-root .ch-note-box { width: 100%; box-sizing: border-box; resize: vertical; min-height: 80px; padding: 8px; font: inherit; font-size: 0.88rem;
+    background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; }

@@ -50,8 +50,8 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
         // matchups tab
         const mt = await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="matchups"]').click(); await new Promise(r => setTimeout(r, 50));
             const c = document.querySelector('#champion-root [data-opt="common"]'); if (c.checked) { c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); }
-            await new Promise(r => setTimeout(r, 50)); const rows = [...document.querySelectorAll('#champion-root .ch-table tbody tr[data-hub]')];
-            return { n: rows.length, first: rows[0] && rows[0].dataset.hub, means: rows.map(r => parseFloat(r.children[3].textContent)) }; })()`);
+            await new Promise(r => setTimeout(r, 50)); const rows = [...document.querySelectorAll('#champion-root .ch-table tbody tr[data-vs]')];
+            return { n: rows.length, first: rows[0] && rows[0].dataset.vs, means: rows.map(r => parseFloat(r.children[3].textContent)) }; })()`);
         R.ok('matchups: every opponent, best first', mt.n === data.n && mt.n >= 5 && mt.means.every((v, i) => i === 0 || v <= mt.means[i - 1] + 1e-9), mt);
         // synergies
         const sy = await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="synergies"]').click(); await new Promise(r => setTimeout(r, 50));
@@ -66,11 +66,26 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
         // ARAM
         const ar = await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="aram"]').click(); for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 100)); const t = document.querySelector('#champion-root .ch-body').textContent; if (!/Loading/.test(t)) return t; } return 'timeout'; })()`);
         R.ok('ARAM tab: Mayhem WR, tier, top augments (rare ones left out), LoLalytics core', /51\.70%/.test(ar) && /tier A/.test(ar) && /Archmage/.test(ar) && !/Rare/.test(ar) && /core build/.test(ar), ar.slice(0, 300));
-        // click a matchup row -> that champion's page; palette entry
-        await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="matchups"]').click(); await new Promise(r => setTimeout(r, 50)); document.querySelector('#champion-root .ch-table tbody tr[data-hub="Akali"]').click(); return 1; })()`);
-        await h.waitFor(`/Akali/.test(document.querySelector('#champion-root .ch-name h2').textContent)`, 10000);
-        R.ok('a matchup row opens that champion (same role)', /Mid/.test(await h.ev(`document.querySelector('#champion-root .ch-role.on').textContent`)));
-        R.ok('recent champions are remembered', JSON.stringify(h.settings().hubRecent.slice(0, 2)) === JSON.stringify(['Akali', 'Ahri']), h.settings().hubRecent);
+        // click a matchup row -> the matchup page (Ahri vs Akali): lane effect, both champions, notes; Swap -> Akali vs Ahri
+        await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="matchups"]').click(); await new Promise(r => setTimeout(r, 50)); document.querySelector('#champion-root .ch-table tbody tr[data-vs="Akali"]').click(); return 1; })()`);
+        await h.waitFor(`!!document.querySelector('#champion-root .ch-vs-head') && /vs Akali/.test(document.querySelector('#champion-root .ch-tab.on').textContent)`, 10000);
+        const vs = await h.ev(`document.querySelector('#champion-root .ch-body').textContent`);
+        R.ok('a matchup row opens the matchup page (Ahri vs Akali, same role)', /Lane effect/.test(vs) && /Akali base WR/.test(vs) && /Build against Akali/.test(vs) && /Your notes/.test(vs) && /Mid/.test(await h.ev(`document.querySelector('#champion-root .ch-role.on').textContent`)), vs.slice(0, 200));
+        // a note is saved per matchup
+        await h.ev(`(() => { const t = document.querySelector('#champion-root [data-note]'); t.value = 'Dodge the charm, fight after 6'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
+        await h.waitFor(`/Saved just now/.test(document.querySelector('#ch-note-state').textContent)`, 5000);
+        R.ok('matchup notes are saved (settings.matchupNotes "Ahri|Akali")', (h.settings().matchupNotes || {})['Ahri|Akali'] && h.settings().matchupNotes['Ahri|Akali'].text === 'Dodge the charm, fight after 6', h.settings().matchupNotes);
+        await h.ev(`document.querySelector('#champion-root [data-swap]').click(); 1`);
+        await h.waitFor(`/Akali/.test(document.querySelector('#champion-root .ch-name h2').textContent) && /vs Ahri/.test(document.querySelector('#champion-root .ch-tab.on').textContent)`, 10000);
+        R.ok('Swap sides: Akali vs Ahri', true);
+        // a champion portrait anywhere in the page opens that champion's page (app-shell.js), the row itself the matchup page
+        await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="matchups"]').click(); await new Promise(r => setTimeout(r, 50));
+            const row = [...document.querySelectorAll('#champion-root .ch-table tbody tr[data-vs]')].find(r => r.dataset.vs !== 'Ahri'); window.__portrait = row.dataset.vs;
+            row.querySelector('img').click(); return 1; })()`);
+        const pid = await h.ev(`window.__portrait`);
+        const pOk = await h.waitFor(`(() => { const n = (DD.getChampions().find(c => c.id === window.__portrait) || {}).name; return n && document.querySelector('#champion-root .ch-name h2').textContent.includes(n) && !document.querySelector('#champion-root .ch-vs-head'); })()`, 10000);
+        R.ok('clicking a portrait in a matchup row opens that champion page (not the matchup)', pOk, pid);
+        R.ok('recent champions are remembered (newest first)', JSON.stringify(h.settings().hubRecent.slice(0, 3)) === JSON.stringify([pid, 'Akali', 'Ahri']), h.settings().hubRecent);
         const pal = await h.ev(`(async () => { DD.openPalette(); const i = document.querySelector('.dg-pal-in'); i.value = 'ahri'; i.dispatchEvent(new Event('input')); await new Promise(r => setTimeout(r, 50));
             const first = document.querySelector('.dg-pal-item'); const txt = first.textContent; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); await new Promise(r => setTimeout(r, 300)); return txt; })()`);
         await h.waitFor(`/Ahri/.test(document.querySelector('#champion-root .ch-name h2').textContent)`, 10000);

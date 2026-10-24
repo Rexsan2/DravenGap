@@ -39,7 +39,10 @@
                 <span class="num ${r.delta > 0.05 ? 'pos' : r.delta < -0.05 ? 'neg' : ''}">${r.delta == null ? '' : (r.delta >= 0 ? '+' : '') + r.delta.toFixed(1)}</span></div>`).join('');
         } else {
             $('head').innerHTML = '<span></span><span>Champion</span><span>Exp WR</span><span>PP</span>';
-            $('list').innerHTML = rows.map(r => `<div class="row" data-id="${esc(r.id)}" title="${esc(r.tip || r.name)}"><img src="${esc(r.img)}" alt="">
+            // the decision card first: your best picks with the reason for each (Exp WR adjusted for your games on it)
+            const card = Array.isArray(d.card) && d.card.length ? `<div class="cardh">Best for you</div>` + d.card.map(r => `<div class="row crow${r.alt ? ' alt' : ''}" data-id="${esc(r.id)}" title="${esc(r.name)}${r.alt ? ': outside your pool, clearly better here' : ''}"><img src="${esc(r.img)}" alt="">
+                <span class="cname"><b>${esc(r.name)}</b><em>${esc(r.why || '')}</em></span><span class="num ${r.wr >= 0.5 ? 'pos' : 'neg'}">${pct(r.wr)}</span></div>`).join('') + '<div class="cardh">All picks · Exp WR</div>' : '';
+            $('list').innerHTML = card + rows.map(r => `<div class="row" data-id="${esc(r.id)}" title="${esc(r.tip || r.name)}"><img src="${esc(r.img)}" alt="">
                 <span class="name">${esc(r.name)}${r.flag ? '<span class="flag" title="Likely counters in this lane">⚠</span>' : ''}${r.trend ? `<small class="${r.trend === 'up' ? 'pos' : 'neg'}">${r.trend === 'up' ? '▲' : '▼'}</small>` : ''}</span>
                 <span class="num wr"><span class="${r.wr >= 0.5 ? 'pos' : 'neg'}">${pct(r.wr)}</span>${bar(r.wr, r.sd, r.p50)}</span>
                 <span class="num ${ppClass(r.pp)}">${r.pp == null ? '–' : r.pp > 0.999 ? '>99%' : pct(r.pp, 0)}</span></div>`).join('');

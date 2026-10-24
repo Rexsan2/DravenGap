@@ -61,9 +61,9 @@ const MAIN_CHANNELS = ['get-favorites', 'save-favorites', 'get-settings', 'save-
     'coachless-stored', 'coachless-status', 'coachless-detail', 'coachless-champion', 'coachless-rate-status'];
 const FEATURE_CHANNELS = ['profile:backfill', 'profile:backfill-cancel', 'profile:emblems', 'profile:insights', 'profile:ledger', 'profile:live', 'profile:lookup',
     'profile:matches', 'profile:match', 'profile:me', 'profile:played', 'profile:progress', 'profile:refresh', 'profile:scout', 'profile:seasons', 'profile:static',
-    'profile:test-key', 'profile:timeline', 'profile:owner', 'profile:session', 'profile:lp-history', 'profile:duo', 'profile:duo-history', 'profile:champ-summary', 'profile:multi',
+    'profile:test-key', 'profile:timeline', 'profile:owner', 'profile:session', 'profile:lp-history', 'profile:duo', 'profile:duo-history', 'profile:group-history', 'profile:champ-summary', 'profile:multi',
     'aram:champ-snapshot', 'build:skills', 'arena:tier-list', 'arena:champ-select',   // (mini:* and diag:* are left out: some tests register the real mini-main / diagnostics-main)
-    'aram:cache-info', 'aram:champ-select', 'aram:champion', 'aram:items', 'aram:tier-list', 'lcu:status', 'lcu:apply-runes', 'lcu:apply-spells', 'lcu:apply-itemset'];
+    'aram:cache-info', 'aram:champ-select', 'aram:champion', 'aram:items', 'aram:tier-list', 'lcu:status', 'lcu:apply-runes', 'lcu:apply-spells', 'lcu:apply-itemset', 'patch:notes', 'lcu:replay-state', 'lcu:replay-open', 'lcu:replay-seek', 'lcu:replay-enable-api'];
 
 // userData: reuse a folder across restarts (several boots of one test); default is a new scratch folder.
 // offscreen: render without a visible window but keep painting, so screenshots (shot) are current

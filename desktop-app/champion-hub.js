@@ -2,7 +2,8 @@
 // Champion hub (C1): one page per champion in #champion-root (view 'champion'). Opened from the sidebar (Champions), Ctrl+K,
 // a right-click on a champion in the draft grid, a recommendation's "why" panel and the Builds view (window.DDHub.open).
 // Tabs: Overview, Matchups (lane opponents), Synergies (allies per role), Builds (saved Coachless data), My stats (your games
-// from Profile) and ARAM Mayhem. Draft numbers come from DD.championData: the dataset and model the recommendations use, so
+// from Profile) and ARAM Mayhem. The matchup page is the "vs <champion>" tab (DD.openMatchup, or a click on a lane opponent):
+// the lane effect, both champions' strength and patch changes, your record in it, the build against it and your own notes. Draft numbers come from DD.championData: the dataset and model the recommendations use, so
 // both always agree. Nothing is downloaded until a tab needs it, and then only what that tab's own view would fetch.
 (function () {
     'use strict';
@@ -15,7 +16,7 @@
     const POS_ROLE = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', BOTTOM: 'BOTTOM', UTILITY: 'SUPPORT' };
     const TABS = [['overview', 'Overview'], ['matchups', 'Matchups'], ['synergies', 'Synergies'], ['builds', 'Builds'], ['mine', 'My stats'], ['aram', 'ARAM Mayhem']];
     const COMMON = 0.01;   // "common" opponents / partners: played in at least 1% of that role's games
-    const S = { champ: null, role: null, tab: 'overview', data: null, loading: false, err: null, builds: null, mine: null, aram: null, recent: [], common: true, sort: 'best', seq: 0 };
+    const S = { champ: null, role: null, vs: null, tab: 'overview', data: null, loading: false, err: null, builds: null, mine: null, aram: null, recent: [], common: true, sort: 'best', seq: 0 };
 
     const champOf = id => (DD.getChampions() || []).find(c => c.id === id) || null;
     const img = id => { const c = champOf(id), v = DD.getLatestPatch && DD.getLatestPatch(); return c && v ? `${DD.ddragonBase}/cdn/${v}/img/champion/${c.image.full}` : ''; };
@@ -43,11 +44,13 @@
         root.addEventListener('click', onClick);
         root.addEventListener('change', onChange);
     }
-    async function open(champ, role) {
+    async function open(champ, role, o = {}) {
         if (!champOf(champ)) { await DD.ready; if (!champOf(champ)) return; }
         if (DD.currentView() !== 'champion') DD.showView('champion');
         if (!root.firstChild) skeleton();
-        if (champ !== S.champ) Object.assign(S, { builds: null, mine: null, aram: null });
+        if (champ !== S.champ) Object.assign(S, { builds: null, mine: null, aram: null, vs: null });
+        if (o.vs && champOf(o.vs) && o.vs !== champ) { S.vs = o.vs; S.tab = 'vs'; }
+        else if (S.tab === 'vs' && !S.vs) S.tab = 'overview';
         S.champ = champ; S.role = role || null; S.err = null;
         S.recent = [champ, ...S.recent.filter(x => x !== champ)].slice(0, 8);
         DD.patchSettings({ hubRecent: S.recent, hubLast: { champ, role: S.role } }).catch(() => {});
@@ -57,7 +60,7 @@
         const seq = ++S.seq;
         S.loading = true; paint();
         let d = null;
-        try { d = DD.championData ? await DD.championData(S.champ, S.role) : null; } catch (e) { S.err = e.message; }
+        try { d = DD.championData ? await DD.championData(S.champ, S.role, S.vs) : null; } catch (e) { S.err = e.message; }
         if (seq !== S.seq) return;
         S.loading = false; S.data = d;
         if (d && d.role) S.role = d.role;
@@ -83,21 +86,23 @@
             <div class="ch-roles">${roles.map(r => `<button class="ch-role${r === S.role ? ' on' : ''}" data-role="${r}" title="Played here in ${pct(d.roles[r].freq, 0)} of its games">${ROLE_LABEL[r]} <span>${pct(d.roles[r].freq, 0)}</span></button>`).join('') || (S.loading ? '<span class="ch-muted">loading…</span>' : '<span class="ch-muted">no draft data for this champion</span>')}</div></div>
             <div class="ch-actions"><span class="dg-prov-row">${DD.provChip && DD.draftProv ? DD.provChip('hub', DD.draftProv()) : ''}</span>
                 <button class="ch-btn" data-act="builds" title="Full Coachless builds for this role">Builds ›</button>${c.key ? '<button class="ch-btn" data-act="aram" title="Open this champion in ARAM Mayhem">ARAM ›</button>' : ''}</div>`;
-        tabs.innerHTML = TABS.map(([k, n]) => `<button class="ch-tab${k === S.tab ? ' on' : ''}" data-tab="${k}" role="tab" aria-selected="${k === S.tab}">${n}</button>`).join('');
+        const tabList = S.vs ? [TABS[0], ['vs', `vs ${nameOf(S.vs)}`], ...TABS.slice(1)] : TABS;
+        tabs.innerHTML = tabList.map(([k, n]) => `<button class="ch-tab${k === S.tab ? ' on' : ''}" data-tab="${k}" role="tab" aria-selected="${k === S.tab}">${n}</button>`).join('');
         if (S.loading && !d) { body.innerHTML = '<div class="ch-empty">Loading…</div>'; return; }
         if (!d) { body.innerHTML = `<div class="ch-empty">${S.err ? 'Could not read the draft data: ' + esc(S.err) : 'No draft data loaded yet.'}</div>`; return; }
         const scroll = body.scrollTop;
-        body.innerHTML = ({ overview: overviewHtml, matchups: matchupsHtml, synergies: synergiesHtml, builds: buildsHtml, mine: mineHtml, aram: aramHtml }[S.tab] || overviewHtml)();
+        body.innerHTML = ({ overview: overviewHtml, vs: vsHtml, matchups: matchupsHtml, synergies: synergiesHtml, builds: buildsHtml, mine: mineHtml, aram: aramHtml }[S.tab] || overviewHtml)();
         body.scrollTop = scroll;
     }
 
     const common = list => list.filter(x => !S.common || x.share >= COMMON);
-    const pairRow = (x, verb) => `<tr class="ch-click" data-hub="${esc(x.champion)}" data-hub-role="${esc(x.role || '')}" title="${esc(nameOf(x.champion))}: open its page">
+    // lane rows open the matchup page (this champion vs that one); ally rows open the ally's page
+    const pairRow = (x, verb) => `<tr class="ch-click" ${verb === 'against' ? `data-vs="${esc(x.champion)}" data-hub-role="${esc(S.role || '')}" title="${esc(nameOf(S.champ))} vs ${esc(nameOf(x.champion))}: the matchup page (its picture: ${esc(nameOf(x.champion))}'s page)"` : `data-hub="${esc(x.champion)}" data-hub-role="${esc(x.role || '')}" title="${esc(nameOf(x.champion))}: open its page"`}>
         <td class="l">${ico(x.champion)}${esc(x.name)}</td><td>${pct(x.share, 1)}</td><td>${Math.round(x.games).toLocaleString()}</td>
         <td class="${sign(x.mean)}"><b>${pts(x.mean)}</b> <span class="ch-muted">± ${(x.sd * 100).toFixed(1)}</span></td><td class="ch-muted">${pts(x.raw)}</td><td>${pp(x.pp)}</td>
         <td class="${x.exp >= 0.5 ? 'delta-pos' : 'delta-neg'}" title="Your Exp WR ${verb} ${esc(x.name)} (nothing else in the draft)">${pct(x.exp)}</td></tr>`;
     const pairHead = (who, verb) => `<thead><tr><th class="l">${who}</th><th title="How often it is played in that role">Played</th><th>Games</th><th>Adjusted Δ ${help('shrunk-delta')}</th><th title="Raw Delta 2 before the sample-size adjustment">Raw Δ</th><th>PP ${help('pp-draft')}</th><th title="Your Exp WR ${verb} it">Exp WR</th></tr></thead>`;
-    const mini = (list, empty) => list.length ? list.map(x => `<div class="ch-mini ch-click" data-hub="${esc(x.champion)}" data-hub-role="${esc(x.role || '')}">${ico(x.champion)}<span class="ch-mini-n">${esc(x.name)}</span><b class="${sign(x.mean)}">${pts(x.mean)}</b>${pp(x.pp)}</div>`).join('') : `<div class="ch-muted">${empty}</div>`;
+    const mini = (list, empty, lane = false) => list.length ? list.map(x => `<div class="ch-mini ch-click" ${lane ? `data-vs="${esc(x.champion)}" data-hub-role="${esc(S.role || '')}"` : `data-hub="${esc(x.champion)}" data-hub-role="${esc(x.role || '')}"`}>${ico(x.champion)}<span class="ch-mini-n">${esc(x.name)}</span><b class="${sign(x.mean)}">${pts(x.mean)}</b>${pp(x.pp)}</div>`).join('') : `<div class="ch-muted">${empty}</div>`;
 
     function overviewHtml() {
         const d = S.data, me = d.roles[S.role];
@@ -116,8 +121,8 @@
                 <div class="ch-kv"><span>Played in this role</span><b>${pct(me.freq, 0)}</b></div>
                 ${tr ? `<div class="ch-kv"><span>vs patch ${esc(tr.prevPatch)} ${help('patch-trend')}</span><b class="${tr.flag ? sign(tr.d) : ''}">${pts(tr.d)}${tr.flag ? (tr.d > 0 ? ' ▲' : ' ▼') : ' (noise)'}</b></div>` : ''}
                 <div class="ch-muted ch-foot">${esc(d.label)}</div></div>
-            <div class="ch-card"><div class="ch-card-h">Best into <span class="ch-muted">lane, common opponents</span></div>${mini(best, 'No favourable matchup with enough games.')}
-                <div class="ch-card-h ch-gap">Worst into</div>${mini(worst, 'No losing matchup with enough games.')}<button class="link-btn" data-tab="matchups">All matchups ›</button></div>
+            <div class="ch-card"><div class="ch-card-h">Best into <span class="ch-muted">lane, common opponents</span></div>${mini(best, 'No favourable matchup with enough games.', true)}
+                <div class="ch-card-h ch-gap">Worst into</div>${mini(worst, 'No losing matchup with enough games.', true)}<button class="link-btn" data-tab="matchups">All matchups ›</button></div>
             <div class="ch-card"><div class="ch-card-h">Best with <span class="ch-muted">allies, any role</span></div>${mini(allies, 'No positive synergy with enough games.')}<button class="link-btn" data-tab="synergies">All synergies ›</button></div>
             <div class="ch-card"><div class="ch-card-h">You ${help('you')}</div>${y ? `
                 ${y.offset != null ? `<div class="ch-big ${sign(y.offset)}">${pts(y.offset)}</div><div class="ch-muted">vs an average player, from ${y.games} game${y.games === 1 ? '' : 's'} (${y.wins}W ${y.games - y.wins}L)</div>` : '<div class="ch-muted">No games in your saved history.</div>'}
@@ -127,6 +132,41 @@
             ${DD.skillOrder ? `<div class="ch-card ch-wide"><div class="ch-card-h">Win rate by game length <span class="ch-muted">${ROLE_LABEL[S.role]}, Emerald+</span></div>${DD.skillOrder.slot(S.champ, S.role, { kind: 'length' })}${DD.skillOrder.slot(S.champ, S.role)}</div>` : ''}
         </div>`;
         return h;
+    }
+    // ------------------------------------------------------------------------------------------------ matchup page (vs tab)
+    function vsHtml() {
+        const d = S.data, me = d.roles[S.role], v = d.vs, opp = S.vs, on = nameOf(opp), mn = nameOf(S.champ);
+        if (!me) return '<div class="ch-empty">No data for this role.</div>';
+        const pn = id => (window.DDPatchNotes && window.DDPatchNotes.info) ? window.DDPatchNotes.info(id) : null;
+        const change = id => { const c = pn(id); return c ? `<div class="ch-kv"><span>Patch ${esc(window.DDPatchNotes.patch() || '')}</span><b class="${c.kind === 'buff' ? 'delta-pos' : c.kind === 'nerf' ? 'delta-neg' : ''}">${c.kind === 'buff' ? '▲ buffed' : c.kind === 'nerf' ? '▼ nerfed' : '= adjusted'}</b></div>` : ''; };
+        // your record: from the My stats summary (your lane opponents in your newest games on this champion)
+        if (!S.mine) setTimeout(loadMine, 0);
+        const oppKey = (champOf(opp) || {}).key, rec = S.mine && S.mine.ok && S.mine.vsOpp ? S.mine.vsOpp[oppKey] : null;
+        const note = DD.matchupNote ? DD.matchupNote(S.champ, opp) : null;
+        return `<div class="ch-vs-head">${ico(S.champ, 'ch-img')}<b>${esc(mn)}</b><span class="ch-muted">vs</span>${ico(opp, 'ch-img')}<b>${esc(on)}</b>
+                <span class="ch-muted">${ROLE_LABEL[S.role]} · ${esc(d.label)}</span>
+                <button class="ch-btn" data-swap="1" title="The same matchup from ${esc(on)}'s side">Swap sides ⇄</button></div>
+            <div class="ch-grid">
+            <div class="ch-card"><div class="ch-card-h">Lane effect ${help('shrunk-delta')}</div>${v ? `
+                <div class="ch-big ${sign(v.mean)}">${pts(v.mean)}</div><div class="ch-muted">for ${esc(mn)}, adjusted for sample size ± ${(v.sd * 100).toFixed(1)}</div>
+                <div class="ch-kv"><span>Raw Δ</span><b>${pts(v.raw)}</b></div>
+                <div class="ch-kv"><span>Games</span><b>${Math.round(v.games).toLocaleString()}${v.low ? ' <span class="ch-muted">(below Min Games: little weight)</span>' : ''}</b></div>
+                <div class="ch-kv"><span>PP ${help('pp-draft')}</span><b>${pp(v.pp)}</b></div>
+                <div class="ch-kv"><span>${esc(mn)}'s Exp WR here</span><b class="${v.exp >= 0.5 ? 'delta-pos' : 'delta-neg'}">${pct(v.exp)}</b></div>` : '<div class="ch-muted">No games of this matchup in the selected data.</div>'}</div>
+            <div class="ch-card"><div class="ch-card-h">The two champions</div>
+                <div class="ch-kv"><span>${esc(mn)} base WR</span><b>${pct(me.wr, 2)}</b></div>${change(S.champ)}
+                <div class="ch-kv"><span>${esc(on)} base WR</span><b>${d.vsBase ? pct(d.vsBase.wr, 2) : '–'}</b></div>${change(opp)}
+                <div class="ch-muted ch-foot">Base win rates in ${ROLE_LABEL[S.role]}; the lane effect comes on top of the difference between them.</div></div>
+            <div class="ch-card"><div class="ch-card-h">You in this matchup ${help('you')}</div>${S.mine && S.mine.loading ? '<div class="ch-muted">Reading your games…</div>'
+                : rec ? `<div class="ch-big ${rec.w / rec.g >= 0.5 ? 'delta-pos' : 'delta-neg'}">${rec.w}-${rec.g - rec.w}</div><div class="ch-muted">your games as ${esc(mn)} against ${esc(on)} (saved in Profile)</div>`
+                : `<div class="ch-muted">No saved games as ${esc(mn)} against ${esc(on)}.</div>`}
+                <button class="link-btn" data-tab="mine">All your ${esc(mn)} games ›</button></div>
+            <div class="ch-card"><div class="ch-card-h">Build against ${esc(on)}</div><div class="ch-muted">Items, runes and spells from Coachless games of exactly this matchup (downloaded on demand).</div>
+                <button class="ch-btn" data-act="builds-vs">Build vs ${esc(on)} ›</button></div>
+            <div class="ch-card ch-wide"><div class="ch-card-h">Your notes <span class="ch-muted">shown in the game plan when you play ${esc(mn)} against ${esc(on)}</span></div>
+                <textarea class="ch-note-box" data-note="1" rows="4" maxlength="2000" placeholder="Power spikes, what to avoid, when to fight, what worked last time…">${esc(note ? note.text : '')}</textarea>
+                <div class="ch-muted" id="ch-note-state">${note ? 'Saved ' + (DD.ago ? DD.ago(note.at) : new Date(note.at).toLocaleDateString()) : 'Saved automatically.'}</div></div>
+            </div>`;
     }
     function matchupsHtml() {
         const d = S.data, list = common(d.matchups).slice();
@@ -258,12 +298,14 @@
         const e = a.entry, d = e.wr - e.avgWr;
         const c = a.champ_ && a.champ_.ok ? a.champ_.data : null, li = a.items && a.items.ok ? a.items.data : null;
         const item = id => { const it = ddItems && ddItems[id]; return `<span class="ch-item" title="${esc(it ? it.name : '#' + id)}"><img src="${DD.ddragonBase}/cdn/${DD.getLatestPatch()}/img/item/${esc(id)}.png" alt="" loading="lazy" onerror="this.style.visibility='hidden'"></span>`; };
-        const augs = r => c ? c.augments[r].filter(x => x.appearance == null || x.appearance >= 2).sort((x, y) => (y.wr || 0) - (x.wr || 0)).slice(0, 4) : [];
+        // by win rate while arammayhem.com listed one; since 2026-10 in its order for the champion, with the augment's tier instead
+        const augs = r => { if (!c) return []; const l = c.augments[r].filter(x => x.appearance == null || x.appearance >= 2); return (l.some(x => x.wr != null) ? l.sort((x, y) => (y.wr || 0) - (x.wr || 0)) : l.sort((x, y) => (x.order || 0) - (y.order || 0))).slice(0, 4); };
+        const augVal = x => (x.wr != null ? x.wr.toFixed(1) + '%' : x.tier ? `${esc(x.tier)}${x.rank != null ? ' #' + x.rank : ''}` : '–');
         return `<div class="ch-grid">
             <div class="ch-card"><div class="ch-card-h">ARAM: Mayhem ${help('aram')}</div><div class="ch-big ${sign(d / 100)}">${e.wr.toFixed(2)}%</div>
                 <div class="ch-muted">tier ${esc(e.tier)} · rank ${e.rank} of ${e.count} · ${d >= 0 ? '+' : ''}${d.toFixed(1)} vs the average</div>
                 <div class="ch-muted ch-foot">patch ${esc(e.patch || '?')} · arammayhem.com</div></div>
-            ${['prismatic', 'gold', 'silver'].map(r => `<div class="ch-card"><div class="ch-card-h">${r[0].toUpperCase() + r.slice(1)} augments</div>${augs(r).map(x => `<div class="ch-kv"><span>${esc(x.name)}</span><b>${x.wr == null ? '–' : x.wr.toFixed(1) + '%'} <span class="ch-muted">${x.appearance == null ? '' : x.appearance.toFixed(1) + '% seen'}</span></b></div>`).join('') || `<div class="ch-muted">${c ? 'None listed.' : 'Not available.'}</div>`}</div>`).join('')}
+            ${['prismatic', 'gold', 'silver'].map(r => `<div class="ch-card"><div class="ch-card-h">${r[0].toUpperCase() + r.slice(1)} augments</div>${augs(r).map(x => `<div class="ch-kv"><span>${esc(x.name)}</span><b>${augVal(x)} <span class="ch-muted">${x.appearance == null ? '' : x.appearance.toFixed(1) + '% seen'}</span></b></div>`).join('') || `<div class="ch-muted">${c ? 'None listed.' : 'Not available.'}</div>`}</div>`).join('')}
             <div class="ch-card"><div class="ch-card-h">Items <span class="ch-muted">LoLalytics, regular ARAM</span></div>${li && li.core ? `<div class="ch-items">${li.core.items.map(item).join('')}</div><div class="ch-muted">core build · ${li.core.wr.toFixed(1)}% WR in regular ARAM (not Mayhem)</div>` : '<div class="ch-muted">Not available.</div>'}</div>
             </div><div class="ch-controls"><button class="ch-btn" data-act="aram">Open in ARAM Mayhem ›</button></div>`;
     }
@@ -273,6 +315,9 @@
 
     // ------------------------------------------------------------------------------------------------ events
     function onClick(e) {
+        const vs = e.target.closest('[data-vs]');
+        if (vs) { open(S.champ, S.role, { vs: vs.dataset.vs }); return; }
+        if (e.target.closest('[data-swap]') && S.vs) { open(S.vs, S.role, { vs: S.champ }); return; }
         const hub = e.target.closest('[data-hub]');
         if (hub) { open(hub.dataset.hub, hub.dataset.hubRole || null); return; }
         const t = e.target.closest('[data-tab]');
@@ -283,15 +328,28 @@
         if (a) {
             const c = champOf(S.champ);
             if (a.dataset.act === 'builds' && DD.openBuilds) DD.openBuilds(S.champ, S.role);
+            else if (a.dataset.act === 'builds-vs' && DD.openBuilds && S.vs) DD.openBuilds(S.champ, S.role, S.vs);
             else if (a.dataset.act === 'aram' && window.DDAram && c) window.DDAram.selectByKey(Number(c.key));
         }
     }
+    // notes save as you type (debounced); no repaint, so the cursor stays where it is
+    let noteTimer = null;
+    root.addEventListener('input', e => {
+        if (!e.target.dataset || !e.target.dataset.note || !S.vs || !DD.setMatchupNote) return;
+        const champ = S.champ, vs = S.vs, text = e.target.value;
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(() => DD.setMatchupNote(champ, vs, text).then(() => { const st = root.querySelector('#ch-note-state'); if (st) st.textContent = text.trim() ? 'Saved just now' : 'Note removed'; }).catch(() => {}), 600);
+    });
     function onChange(e) {
         const o = e.target.dataset && e.target.dataset.opt;
         if (o === 'common') { S.common = e.target.checked; paint(); }
         else if (o === 'sort') { S.sort = e.target.value; paint(); }
     }
-    // the hub follows the Time Period / Rank selection: re-read when it is shown again
+    // the hub follows the Time Period / Rank selection: re-read when it changes while the page is shown, and when it is shown again
+    for (const id of ['time-period-select', 'rank-select']) {
+        const sel = document.getElementById(id);
+        if (sel) sel.addEventListener('change', () => { if (DD.currentView() === 'champion' && S.champ && sel.value !== 'range-pick') setTimeout(load, 0); });
+    }
     DD.onView((name, prev) => { if (name === 'champion' && prev !== 'champion' && S.champ && !S.loading) load(); else if (name === 'champion') paint(); });
     window.addEventListener('builds-updated', () => { if (S.builds) { S.builds = null; if (DD.currentView() === 'champion' && S.tab === 'builds') paint(); } });
     window.addEventListener('coach-updated', e => { if (DD.currentView() === 'champion' && S.tab === 'builds' && e.detail && e.detail.champ === S.champ) paint(); });
@@ -300,5 +358,5 @@
         if (DD.currentView() === 'champion') { await DD.ready; if (S.champ) load(); else paint(); }
     })();
 
-    window.DDHub = { open, state: S, reload: load, paint, setTab: t => { if (TABS.some(x => x[0] === t)) { S.tab = t; paint(); } } };
+    window.DDHub = { open, openMatchup: (champ, role, vs) => open(champ, role, { vs }), state: S, reload: load, paint, setTab: t => { if (TABS.some(x => x[0] === t)) { S.tab = t; paint(); } } };
 })();

@@ -6,6 +6,10 @@
 //     or the ARAM build, end of game -> Profile). Setting followGame (on by default); a manual click always wins until
 //     the next phase change.
 //   - Toasts: DD.toast(text, { action, actionLabel, ms })
+//   - Champion portraits: a click on any champion picture opens that champion's page (Champions view), in the role of the row
+//     it sits in when one is known. Not where a click already means something else: the draft board and grid (pick), ARAM
+//     Mayhem and Arena (select), Builds (its own champion picker), Profile (its own: champion page, or the matchup page for
+//     your lane opponent). Inside the draft, the Duo tab's portraits do open pages. Right-click keeps the champion menu.
 (function () {
     const DD = window.DD;
     if (!DD) return;
@@ -14,6 +18,32 @@
     const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable); };
     const modalOpen = () => [...document.querySelectorAll('#how-to-use-modal, #storage-modal, #range-modal, #settings-modal, #glossary-modal')].some(m => m.style.display && m.style.display !== 'none');
+
+    // ---------------------------------------------------------------- champion portraits -> champion page
+    const PORTRAIT_VIEWS = new Set(['champion', 'premades', 'tierlist', 'scout']);
+    const ROLE_WORDS = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', MID: 'MIDDLE', BOTTOM: 'BOTTOM', BOT: 'BOTTOM', SUPPORT: 'SUPPORT', UTILITY: 'SUPPORT' };
+    document.addEventListener('click', e => {
+        if (e.button !== 0 || !DD.openChampion) return;
+        const img = e.target.closest && e.target.closest('img');
+        if (!img) return;
+        const m = /\/img\/champion\/([^/.?]+)\.png/.exec(img.getAttribute('src') || '');
+        if (!m) return;
+        const view = document.body.dataset.view;
+        const inFlow = img.closest('#flow-bar, .pd-card'), inDuo = img.closest('#duo-view');
+        if (!inFlow && !inDuo && !PORTRAIT_VIEWS.has(view)) return;          // views with their own click meaning
+        if (img.closest('.ch-head, #ch-head')) return;                       // the page's own header picture
+        const id = decodeURIComponent(m[1]);
+        if (!(DD.getChampions() || []).some(c => c.id === id)) return;
+        const r = img.closest('[data-hub-role], [data-role], [data-pos]');
+        const raw = r && (r.dataset.hubRole || r.dataset.role || r.dataset.pos);
+        e.preventDefault(); e.stopPropagation();
+        DD.openChampion(id, ROLE_WORDS[String(raw || '').toUpperCase()] || null);
+    }, true);
+    // portraits look clickable where they open a page
+    const st = document.createElement('style');
+    st.textContent = `body[data-view="champion"] img[src*="/img/champion/"]:not(.ch-img), body[data-view="premades"] img[src*="/img/champion/"], body[data-view="tierlist"] img[src*="/img/champion/"],
+        body[data-view="scout"] img[src*="/img/champion/"], #duo-view img[src*="/img/champion/"], #flow-bar img[src*="/img/champion/"] { cursor: pointer; }`;
+    document.head.appendChild(st);
 
     // ---------------------------------------------------------------- toasts
     const host = document.createElement('div');
@@ -58,6 +88,8 @@
         { label: 'Champion pages', hint: 'view', run: () => DD.showView('champion'), keys: 'champion hub page matchups synergies counters' },
         { label: 'Tier list', hint: 'view', run: () => DD.showView('tierlist'), keys: 'tier list tierlist meta best champions patch movers buffs nerfs' },
         { label: 'Multi-search', hint: 'view', run: () => DD.showView('scout'), keys: 'multi search multisearch lobby scout players paste' },
+        { label: 'Patch changes for my champions', hint: 'card', run: () => DD.patchDay && DD.patchDay.show(), keys: 'patch notes changes buffs nerfs my champions new patch day' },
+        { label: 'Premades', hint: 'view', run: () => DD.showView('premades'), keys: 'premades premade friends duo partner 5 stack clash team synergy' },
         { label: 'Game plan', hint: 'flow', run: () => DD.flow && DD.flow.openPlan(), keys: 'game plan matchup brief lane opponent post lock' },
         { label: 'Send runes, spells and item set to the client', hint: 'flow', run: () => DD.flow && DD.flow.send(false), keys: 'send apply import runes spells items client' },
         { label: 'Profile', hint: 'view', run: () => profile(null, 'summary'), keys: 'profile summary matches' },
@@ -70,6 +102,7 @@
         { label: 'Mini window (always on top)', hint: 'window', run: () => DD.mini && DD.mini.toggle(), keys: 'mini compact small overlay always on top champ select' },
         { label: 'Glossary', hint: 'dialog', run: () => DD.openGlossary && DD.openGlossary(), keys: 'glossary definitions pp wpa exp wr shrunk delta dd score tags colours explain' },
         { label: 'Saved data', hint: 'dialog', run: click('#storage-info'), keys: 'saved data storage download history' },
+        { label: 'Reset draft', hint: 'draft', run: () => { DD.showView('draft'); if (DD.resetDraft) DD.resetDraft(); }, keys: 'reset clear draft board empty new' },
         { label: 'Practice draft', hint: 'draft', run: () => DD.practiceDraft && DD.practiceDraft(), keys: 'practice draft what if manual offline sandbox' },
         { label: 'Run setup check', hint: 'dialog', run: () => DD.onboarding && DD.onboarding.open(), keys: 'setup check first run onboarding wizard client riot key account data' }
     ];
@@ -86,6 +119,13 @@
         if (riot) out.push({ label: `Open profile ${riot[1]}#${riot[2]}`, hint: 'Riot ID', run: async () => profile({ gameName: riot[1].trim(), tagLine: riot[2], platform: await defaultPlatform() }, 'summary') });
         const rec = (window.DDProfile && window.DDProfile.state && window.DDProfile.state.recent) || [];
         for (const a of rec) if (!nq || norm(a.gameName + a.tagLine).includes(nq)) out.push({ label: `${a.gameName}#${a.tagLine}`, hint: `profile · ${a.platform}`, run: () => profile(a, 'summary') });
+        // "ahri vs zed": the matchup page (Ahri's usual role)
+        const vs = q.match(/^\s*(.+?)\s+(?:vs\.?|v)\s+(.+?)\s*$/i);
+        if (vs && DD.openMatchup) {
+            const find = t => { const n = norm(t); const all = DD.getChampions() || []; return all.find(c => norm(c.name) === n || norm(c.id) === n) || all.find(c => norm(c.name).startsWith(n)) || null; };
+            const a = find(vs[1]), b = find(vs[2]);
+            if (a && b && a.id !== b.id) out.push({ label: `${a.name} vs ${b.name}`, hint: 'Matchup page', img: a, run: () => DD.openMatchup(a.id, null, b.id) });
+        }
         if (nq) {
             const champs = (DD.getChampions() || []).map(c => ({ c, n: norm(c.name), i: norm(c.id) }))
                 .filter(x => x.n.includes(nq) || x.i.includes(nq))

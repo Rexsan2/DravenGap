@@ -52,10 +52,12 @@
             <p><b>What +3.26 means:</b> given how strong A and B are right now, A should beat B X% of the time; A actually beats B X + 3.26% of the time.</p>
             <p><b>Total Δ</b> is the raw sum over every ally and enemy that meets Min Games; <b>Lane Δ</b> is the lane opponent's part, <b>Ally Δ</b> and <b>Enemy Δ</b> the rest. Shrunk Δ is the honest version of Total Δ.</p>` },
         'role-freq': { group: 'Draft', title: 'Role Freq', html: `<p>How often the champion is played in this role when it is picked at all. A champion at 3% Role Freq in Top is mostly played elsewhere; its numbers in Top rest on few games.</p>` },
-        'you': { group: 'Draft', title: 'You: personal offset', html: `
-            <p>How much better or worse than average you do on this champion, in win-rate points, from your Summoner's Rift games (ranked and normals; not ARAM, Arena or co-op vs AI): the ones the League client shares, plus your Profile backfill when a Riot key is set.</p>
+        'you': { group: 'Draft', title: 'For you: Exp WR for you', html: `
+            <p><b>For you</b> = the pick's Exp WR + how you do on that champion + an unfamiliarity estimate for champions you have hardly played. It answers "what should <i>I</i> lock in", where Exp WR answers "what is strong here". The "Best for you" card above the list (and in the mini window) ranks your pool by it.</p>
+            <p><b>Unfamiliarity</b> (an estimate, not measured from your account): about −4 points for a first game on a champion, fading with experience (−2 at ~5 games, −1 at ~10, ~0 from 20). Experience is your saved games on it, or your mastery points ÷ 800 if that is more. Once you have games on the champion, your own record takes over from the estimate.</p>
+            <p><b>Your record</b> on the champion: how much better or worse than average you do on it, in win-rate points, from your Summoner's Rift games (ranked and normals; not ARAM, Arena or co-op vs AI): the ones the League client shares, plus your Profile backfill when a Riot key is set.</p>
             <p><b>How it's calculated:</b> your win rate on the champion minus the dataset's base WR for it (per game, using the role you played), minus your overall level vs. the dataset's rank. The result is shrunk heavily toward 0 (prior SD 5%) according to how few games you have, so 3 games barely move it.</p>
-            <p class="pp-muted">Shown separately: it is <b>not</b> included in Exp WR, Shrunk Δ, PP or P(best). Blank means no games on that champion in your saved history. The client only shares your recent games (roughly the last 20–100), so DravenGap saves them on every refresh and the history grows over time.</p>` },
+            <p class="pp-muted">Only For you uses these: Exp WR, Shrunk Δ, PP and P(best) stay the population's numbers. Blank means your stats are not loaded (no client and nothing saved). The client only shares your recent games (roughly the last 20–100), so DravenGap saves them on every refresh and the history grows over time.</p>` },
         'blind-risk': { group: 'Draft', title: '⚠ Blind-pick risk', html: `
             <p>Shown only while your lane opponent is not picked yet. Over the champions usually played in that lane (each weighted by how often it is picked), the pick's lane effect is averaged, and the hardest likely counters are listed.</p>
             <p>⚠ appears when a counter picked in 3%+ of the lane's games costs 3+ points (after the same sample-size adjustment as Shrunk Δ).</p>` },
@@ -74,6 +76,17 @@
             <p>Pairs for you and your duo partner, ranked by the pair's <b>duo Exp WR</b>: both champions' base strength plus their adjusted synergy Δ (the same sample-size shrinkage as Shrunk Δ, using the duo prior for Bot + Support and the jungle prior for Jungle + a lane).</p>
             <p>PP is the chance the pair's synergy is truly positive, on the usual scale. "Together" is your record with the partner from the games saved in Profile.</p>
             ${SCALE}` },
+        'adaptive': { group: 'Draft', title: 'Adaptive time period', html: `
+            <p>A Time Period that uses more games without going stale. <b>Matchups and synergies</b> pool every saved patch of the season (up to 5), because they barely move between patches; a champion <b>rework</b> cuts its older patches off.</p>
+            <p><b>Champion win rates</b> lean on the current patch: an older patch counts less the further the meta has drifted since, and buffs and nerfs from Riot's patch notes are corrected for (a typical buff is worth about +0.7 points, a nerf about −0.8).</p>
+            <p>Checked by predicting each patch from the ones before it: about as accurate as the current patch alone for champion win rates, and half the error for matchups and synergies. The why panel of a recommendation lists the patches and corrections used.</p>` },
+        'patch-notes': { group: 'Draft', title: 'Patch-note marks ▲ ▼', html: `
+            <p>From Riot's notes for the current patch: <span class="delta-pos">▲</span> buffed, <span class="delta-neg">▼</span> nerfed, blue = adjusted (both ways, or unclear). Hover a mark for the changes. They say what Riot changed, not how it played out; the patch trend ▲ / ▼ next to the win rate shows that.</p>` },
+        'pair-edge': { group: 'Premades', title: 'Pair edge, combo value, best third', html: `
+            <p><b>Pair edge</b>: (Exp WR of A − 50%) + (Exp WR of B − 50%) + their synergy, in win-rate points, on an empty board. Synergy is half of each direction (A with B, B with A), sample-size adjusted like Shrunk Δ. "About 53% with an average rest of team" is 50% + the edge.</p>
+            <p><b>Combo value</b> (stack planner): the same for 3-5 players: every champion's strength plus the synergy of <b>every two</b> of them. <b>Best for this stack</b> rates a player's champion by the best combo it is part of.</p>
+            <p><b>Beating / missing the stats</b>: your record in a pair against 50% + its edge; marked only when the gap is more than twice the noise of that many games.</p>
+            <p><b>Best third</b>: champions in the other roles with the highest synergy with both champions of the pair.</p>` },
         'wpa': { group: 'Builds', title: 'WPA: win probability added', html: `
             <p>How much the team's win chance moved, in percentage points, while the item (or rune, or spell) was in use. Coachless estimates the win chance at every moment of a game with a model trained on ranked games.</p>
             <p><b>Why not just win rate?</b> Win rate hides when the item gets bought. Heartsteel has the best win rate (54.2%) but is mostly bought by players who are already ahead (Pre-Buy WP 53.7%), so it gets credit it didn't earn. Titanic Hydra has the highest WPA (+1.46) because the win chance rose most while it was held.</p>
@@ -98,9 +111,13 @@
             <p><b>First time</b>: no ranked games and no mastery on the champion. <b>New to champ</b>: at most 1 ranked game on it this season (op.gg) or under 10,000 mastery, unless they have 50,000+ mastery.</p>
             <p><b>One-trick</b>: 60%+ of 15+ ranked games this season on this champion (10+ games on it). <b>Autofill</b>: Smite but mostly another role (50%+ of games there, under 15% jungle), or a jungle main without Smite.</p>
             <p><b>Smurf?</b>: level 40 or lower with 55%+ over 10+ games, or 15–60 ranked games at 65%+. <b>Duo / Premade</b>: seen together in the client lobby, a shared recent match, or two shared cached matches.</p>` },
+        'review': { group: 'Profile', title: 'Review: map and replay', html: `
+            <p><b>Lane at 10 / 15 / 20</b>: your gold, CS and XP minus your lane opponent's. <b>What moved the game</b>: the three-minute stretches where your team's gold lead changed most.</p>
+            <p><b>Map</b>: ✕ your deaths, ● your kills, small dots assists. Hover a mark for the time and who; click it (replay available) to watch from 15 seconds before.</p>
+            <p><b>Replay</b>: opened through the League client, which keeps replays of the current patch only. Jumping to a moment uses the game's local Replay API, turned on once with <b>Turn on replay control</b>.</p>` },
         'aram': { group: 'ARAM Mayhem', title: 'ARAM Mayhem numbers', html: `
             <p><b>WR / tier / vs avg</b>: the champion's ARAM: Mayhem win rate and tier from arammayhem.com, and its difference from the average champion.</p>
-            <p><b>Augments</b>: win rate when the augment was taken and how often it appeared (rows under 2% are dimmed); "vs champ" is the difference from the champion's own Mayhem WR.</p>
+            <p><b>Augments</b>: arammayhem.com no longer publishes augment win rates per champion. Augments are listed in its recommended order for the champion with how often each appeared (rows under 2% are dimmed), and the augment's <b>tier</b>: <em>A #18</em> = tier A, 18th among augments of its rarity; <b>Overall</b> = among all augments. When a win rate is published, it is shown with "vs champ", the difference from the champion's own Mayhem WR.</p>
             <p><b>Items</b> come only from LoLalytics <b>regular</b> ARAM (all ranks, 30 days), so their win rates are not comparable with Mayhem win rates.</p>
             <p><b>Reroll advice</b>: an average reroll is the mean Mayhem WR over all champions (a reroll is random); a bench swap is suggested when the bench has a champion 1+ point better.</p>` },
         'arena': { group: 'Arena', title: 'Arena numbers', html: `

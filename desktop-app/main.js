@@ -306,10 +306,10 @@ async function fetchPersonalStats() {
     try {
         const creds = await getLeagueCredentials();
         const summoner = await lcuRequest('/lol-summoner/v1/current-summoner', creds);
-        if (!summoner) return null;
+        if (!summoner) return offlinePersonalStats();
 
         const page = await lcuRequest('/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=100', creds);
-        if (!page) return null;
+        if (!page) return offlinePersonalStats();
         const fresh = lcuHistory.extractGames(page, summoner);
 
         // Keyed by puuid so several accounts on one PC keep separate histories
@@ -317,18 +317,44 @@ async function fetchPersonalStats() {
         const store = readPersonalHistory();
         const games = lcuHistory.mergeGameHistory(store[accountKey], fresh);
         store[accountKey] = games;
-        writePersonalHistory(store);
-
         const masteryRaw = await lcuRequest('/lol-champion-mastery/v1/local-player/champion-mastery', creds);
+        const mastery = lcuHistory.extractMastery(masteryRaw);
+        const name = summoner.gameName || summoner.displayName || '';
+        // remembered so the history (and mastery) still load with the client closed (offlinePersonalStats)
+        store._owner = { key: accountKey, name, puuid: summoner.puuid || null, mastery: Object.keys(mastery).length ? mastery : (store._owner && store._owner.key === accountKey ? store._owner.mastery : {}) };
+        writePersonalHistory(store);
         return {
-            summoner: { name: summoner.gameName || summoner.displayName || '', puuid: summoner.puuid || null },
+            summoner: { name, puuid: summoner.puuid || null },
             games,
-            mastery: lcuHistory.extractMastery(masteryRaw),
+            mastery: store._owner.mastery,
             fetchedAt: Date.now()
         };
     } catch (e) {
-        return null;
+        return offlinePersonalStats();
     }
+}
+
+// The client is closed: the owner's saved history (the last client account, or the only one saved) with its last mastery; with
+// nothing saved from the client, the owner's games from the Profile cache (Settings > Default account). null if there is nothing.
+async function offlinePersonalStats() {
+    try {
+        const store = readPersonalHistory();
+        const o = store._owner || null;
+        let key = o && o.key;
+        if (!key) { const keys = Object.keys(store).filter(k => !k.startsWith('_')); if (keys.length === 1) key = keys[0]; }
+        let games = (key && Array.isArray(store[key])) ? store[key] : [];
+        let mastery = (o && o.mastery) || {}, name = (o && o.name) || '';
+        if (!games.length || !Object.keys(mastery).length) {
+            const p = await profileMain.ownerCachedGames().catch(() => null);
+            if (p) {
+                if (!games.length) games = p.games;
+                if (!Object.keys(mastery).length) mastery = p.mastery || {};
+                name = name || p.name || '';
+            }
+        }
+        if (!games.length && !Object.keys(mastery).length) return null;
+        return { summoner: { name, puuid: (o && o.puuid) || null }, games, mastery, fetchedAt: Date.now(), offline: true };
+    } catch (e) { return null; }
 }
 
 // --- IPC Handlers ---
@@ -345,6 +371,13 @@ ipcMain.handle('set-riot-key', (event, key) => {
 ipcMain.handle('sync-riot-history', (event) => syncRiotHistory(event.sender));
 ipcMain.handle('scrape-start', (event, jobs, opts) => runScrapeJobs(event.sender, jobs, { background: !!(opts && opts.background) }));
 ipcMain.handle('scrape-cancel', () => { if (scrapeAbort) scrapeAbort.abort(); return true; });
+// The newest patch LoLalytics has (one page, remembered for an hour), so Download more history offers it as soon as it's out
+let latestPatchCache = { at: 0, patch: null };
+ipcMain.handle('scrape-latest-patch', async () => {
+  if (latestPatchCache.patch && Date.now() - latestPatchCache.at < 3600e3) return latestPatchCache.patch;
+  try { const p = await lolalytics.latestPatch(); if (p) latestPatchCache = { at: Date.now(), patch: p }; return p || latestPatchCache.patch; }
+  catch (e) { return latestPatchCache.patch; }
+});
 // Live Tracking polls these every second: go through the shared LCU connection (cached credentials, 8-60 s back-off while
 // the client is closed) instead of spawning wmic/PowerShell on every poll. Shared with the Profile and ARAM views.
 const sharedLcu = require('./profile-lcu').getSharedLcu({ getLeagueCredentials, lcuRequest });
@@ -401,6 +434,7 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (event, settings) => {
   try {
     fs.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2));
+    if (typeof trayApp !== 'undefined' && trayApp.settingsChanged) trayApp.settingsChanged(settings || {});
   } catch (error) {
     console.error('Failed to save settings:', error);
   }
@@ -417,12 +451,19 @@ profileMain.register(featureDeps); // op.gg-style profiles + live game (Riot API
 require('./aram-main').register(featureDeps);    // ARAM Mayhem (arammayhem.com, LoLalytics ARAM builds)
 require('./arena-main').register(featureDeps);   // Arena (LoLalytics Arena tier list and builds; arena:*)
 require('./skills-main').register(featureDeps);  // skill order for Builds and the game plan (LoLalytics, on demand; build:*)
+require('./patchnotes-main').register(featureDeps); // buff / nerf / adjust marks from Riot's patch notes (patch:*)
 require('./seed-main').register(featureDeps);    // personal build: data packed in the exe, imported on first start (seed:*)
 require('./lcu-apply').register(featureDeps);    // 'Apply to client': rune pages, summoner spells, item sets (lcu:*)
+require('./replay-main').register(featureDeps);  // replay review: download / open a replay, jump to a death (lcu:replay-*)
 let mainWindowRef = null;
 const miniWindow = require('./mini-main').register({ // the compact always-on-top champ-select window (mini:*)
     ipcMain, BrowserWindow, screen: () => require('electron').screen, appDir: __dirname, userDataPath,
     getMainWindow: () => mainWindowRef, sendToWindow
+});
+// Tray, close-to-tray, one instance, Start with Windows (tray-main.js)
+const trayApp = require('./tray-main').register({
+    app, getMainWindow: () => mainWindowRef, createWindow: () => createWindow(), settingsFilePath,
+    iconPath: path.join(__dirname, 'assets/dravengap.png'), openMini: () => miniWindow.open()
 });
 diagnostics.register({                            // Settings > Diagnostics: store sizes, back-off state, export (diag:*)
     ipcMain, userDataPath, getLogs: logRing.lines,
@@ -466,6 +507,7 @@ function createWindow() {
   const windowState = getWindowState();
 
   const mainWindow = new BrowserWindow({
+    show: !(trayApp.startedHidden && !mainWindowRef && !createWindow.shownOnce), // "Start with Windows" opens in the tray
     x: windowState.x,
     y: windowState.y,
     width: windowState.width,
@@ -499,10 +541,12 @@ function createWindow() {
     }
   });
 
-  // If it was maximized when last closed (or if it's the first launch), maximize it now
-  if (windowState.isMaximized) {
+  // If it was maximized when last closed (or if it's the first launch), maximize it now (not while starting hidden in the tray)
+  if (windowState.isMaximized && mainWindow.isVisible()) {
     mainWindow.maximize();
   }
+  createWindow.shownOnce = true;
+  if (trayApp.attach) trayApp.attach(mainWindow);
 
   mainWindow.loadFile('index.html');
 
@@ -525,6 +569,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!trayApp.single) return; // another DravenGap is running: it shows its window, this one quits
   loadRiotApiKey(); // safeStorage is only usable once the app is ready
   createWindow();
 

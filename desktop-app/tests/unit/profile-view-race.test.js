@@ -46,7 +46,7 @@ const matchRes = (id, a) => ({ ok: true, puuid: a.puuid, group: a.group, start: 
   pending.length = 0;
   window.DDProfile.open({ gameName: 'C', tagLine: 'T', platform: 'EUW1' }); await tick();
   const c0 = pending.pop(); c0.res(matchRes('C1', c0.a)); await tick();
-  const click = (g) => { const t = { dataset: { act: 'group', g }, closest: () => t }; return global.__ls.click({ target: t, stopPropagation() {} }); };
+  const click = (g) => { const t = { dataset: { act: 'group', g }, classList: { contains: () => false }, closest: () => t }; return global.__ls.click({ target: t, stopPropagation() {} }); };
   click('aram'); await tick(); click('solo'); await tick();
   const reqs = pending.splice(0);
   const solo = reqs.find(r => r.a.group === 'solo'), aram = reqs.find(r => r.a.group === 'aram');

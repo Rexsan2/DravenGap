@@ -210,3 +210,4 @@ body:not([data-view]) .flow-bar { display: none; }
 .pp-t { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .pp-t th, .pp-t td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--border-color); }
 .pp-t .l { text-align: left; }
+.fb-note { white-space: pre-wrap; }

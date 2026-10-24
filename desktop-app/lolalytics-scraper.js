@@ -204,4 +204,20 @@ async function scrapeDataset({ period, rank, signal, onProgress = () => {}, cham
     return { statsGz, matchupsGz, totalGames: dataset.totalGames, combos: dataset.statsList.length, matchupCount: Object.keys(dataset.matchups).length };
 }
 
-module.exports = { parseQwikJson, buildDataset, scrapeDataset, getChampionList, urlName };
+// The newest patch LoLalytics has data for: every page shows it ("Patch 16.20" in the header, and in its element keys
+// "..._emerald_plus_16.20_all__all"). Read from the tier list page; null if the page can't be read.
+function parseLatestPatch(html) {
+    const s = String(html || '');
+    const head = /Patch<\/div><div[^>]*>(?:<!--[^>]*-->|\s)*(\d+\.\d+)/.exec(s);
+    if (head) return head[1];
+    const counts = {};
+    for (const m of s.matchAll(/_(\d{2}\.\d{1,2})_all__all"/g)) counts[m[1]] = (counts[m[1]] || 0) + 1;
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return best ? best[0] : null;
+}
+async function latestPatch(signal) {
+    const html = await fetchText('https://lolalytics.com/lol/tierlist/', signal);
+    return parseLatestPatch(html);
+}
+
+module.exports = { parseQwikJson, buildDataset, scrapeDataset, getChampionList, urlName, parseLatestPatch, latestPatch };

@@ -1,7 +1,7 @@
 // desktop-app/preload.js
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
-const FEATURE_CHANNEL = /^(profile|aram|arena|build|lcu|diag|mini|seed):[a-z0-9-]+$/;
+const FEATURE_CHANNEL = /^(profile|aram|arena|build|lcu|diag|mini|seed|patch):[a-z0-9-]+$/;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Favorites
@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Local LoLalytics scraper (past patches, 7/14 day windows)
   scrapeStart: (jobs, opts) => ipcRenderer.invoke('scrape-start', jobs, opts),
   scrapeCancel: () => ipcRenderer.invoke('scrape-cancel'),
+  scrapeLatestPatch: () => ipcRenderer.invoke('scrape-latest-patch'),
   onScrapeEvent: (callback) => {
     for (const channel of ['scrape-progress', 'scrape-dataset', 'scrape-error', 'scrape-finished']) {
       ipcRenderer.on(channel, (event, payload) => callback(channel, payload));

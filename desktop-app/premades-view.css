@@ -1,0 +1,62 @@
+/* Premades view (premades-view.js) */
+#premades-root { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+#premades-root .pm-wrap { display: flex; gap: 14px; min-height: 0; flex: 1; padding: 12px; }
+#premades-root .pm-side { width: 260px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border-color); padding-right: 10px; }
+#premades-root .pm-main { flex: 1; overflow-y: auto; min-width: 0; }
+#premades-root .pm-h { font-size: 1.05rem; font-weight: 700; margin-bottom: 6px; }
+#premades-root .pm-m { color: var(--text-secondary); font-size: 0.8rem; }
+#premades-root .pm-hint { margin-bottom: 8px; }
+#premades-root .pm-friend { display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 0.88rem; }
+#premades-root .pm-friend:hover { background: var(--bg-secondary); }
+#premades-root .pm-friend.on { background: rgba(96, 165, 250, 0.12); box-shadow: inset 2px 0 0 var(--accent-color); }
+#premades-root .pm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#premades-root .pm-fn em { color: var(--text-secondary); font-style: normal; }
+#premades-root .pm-title { display: flex; align-items: center; gap: 10px; }
+#premades-root .pm-title h2 { margin: 0 0 8px; font-size: 1.2rem; }
+#premades-root .pm-btn { padding: 3px 10px; font-size: 0.82rem; }
+#premades-root .pm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 12px; }
+#premades-root .pm-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; }
+#premades-root .pm-wide { grid-column: 1 / -1; margin-bottom: 12px; }
+#premades-root .pm-card-h { font-weight: 700; margin-bottom: 6px; }
+#premades-root .pm-big { font-size: 1.6rem; font-weight: 700; }
+#premades-root .pm-kv { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 2px 0; }
+#premades-root .pm-pair { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.86rem; flex-wrap: wrap; }
+#premades-root .pm-pair > span:first-of-type { flex: 1; min-width: 140px; }
+#premades-root .pm-click { cursor: pointer; } #premades-root .pm-click:hover { background: var(--bg-primary); }
+#premades-root .pm-ico { width: 24px; height: 24px; border-radius: 4px; }
+#premades-root .pm-foot { margin-top: 6px; }
+#premades-root .pm-empty { padding: 20px; color: var(--text-secondary); }
+#premades-root .pm-stack-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 0.88rem; flex-wrap: wrap; }
+#premades-root .pm-stack-row > b { width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#premades-root .pm-role { min-width: 60px; font-weight: 700; color: var(--accent-color); }
+#premades-root .pm-stack-champs { display: flex; gap: 3px; }
+@media (max-width: 760px) { #premades-root .pm-wrap { flex-direction: column; } #premades-root .pm-side { width: auto; border-right: 0; } }
+#premades-root .pm-period { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; }
+#premades-root .pm-period input { vertical-align: -2px; }
+/* stack planner */
+#premades-root .pm-wrap { position: relative; }
+#premades-root .pm-stack .pm-card-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#premades-root .pm-pool { margin-left: auto; display: flex; gap: 10px; font-weight: 400; }
+#premades-root .pm-pool input { vertical-align: -2px; }
+#premades-root .pm-rsel { min-width: 76px; padding: 1px 4px; font-size: 0.82rem; font-weight: 700; color: var(--accent-color); }
+#premades-root .pm-best { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+#premades-root .pm-bp, #premades-root .pm-lc { display: inline-flex; flex-direction: column; align-items: center; font-size: 0.7rem; margin-right: 2px; }
+#premades-root .pm-bp em, #premades-root .pm-lc em { font-style: normal; }
+#premades-root .pm-together { margin: 6px 0 4px; font-size: 0.88rem; }
+#premades-root .pm-sub { font-weight: 700; font-size: 0.86rem; margin: 10px 0 4px; }
+#premades-root .pm-combo .pm-ico { margin-right: -2px; }
+/* details panel (pair or combo) */
+#premades-root .pm-detail { position: absolute; top: 8px; right: 8px; bottom: 8px; width: min(440px, calc(100% - 16px)); overflow-y: auto; z-index: 20;
+    background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+#premades-root .pm-detail[hidden] { display: none; }
+#premades-root .pm-x { position: absolute; top: 6px; right: 8px; padding: 0 8px; font-size: 1.1rem; line-height: 1.4; }
+#premades-root .pm-dh { display: flex; align-items: center; gap: 6px; margin: 0 28px 10px 0; flex-wrap: wrap; }
+#premades-root .pm-dico { width: 40px; height: 40px; border-radius: 6px; }
+#premades-root .pm-dsum { display: flex; gap: 18px; margin-bottom: 8px; }
+#premades-root .pm-dsum > div { flex: 1; }
+#premades-root .pm-tab { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin: 6px 0; }
+#premades-root .pm-tab th { text-align: left; color: var(--text-secondary); font-weight: 600; font-size: 0.76rem; }
+#premades-root .pm-tab td, #premades-root .pm-tab th { padding: 3px 4px; border-bottom: 1px solid var(--border-color); }
+#premades-root .pm-tab td .pm-ico { width: 20px; height: 20px; vertical-align: -5px; }
+#premades-root .pm-lane { font-size: 0.82rem; margin-bottom: 6px; }
+#premades-root .pm-lane > div { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }

@@ -126,14 +126,18 @@
         e.preventDefault(); e.stopPropagation();
         const { role, side } = roleAt(e.target);
         const opp = opponentOf(side, role);
-        menuFor = { id, role: role || null, opp };
+        menuFor = { id, role: role || null, opp, side: side || null };
         const c = champ(id);
+        const onBoard = e.target.closest('#draft-area .role-slot');   // a champion on the draft board: it can be taken off
         const items = [
+            onBoard ? ['remove', `Remove from ${side === 'right' ? 'right' : 'left'} ${LANE[role] || role}`] : null,
             ['hub', `Champion page`],
+            opp ? ['matchup', `Matchup vs ${nameOf(opp)}`] : null,
             ['builds', `Builds${role ? ' · ' + (LANE[role] || role) : ''}`],
             opp ? ['builds-vs', `Builds vs ${nameOf(opp)}`] : null,
             c && c.key ? ['aram', 'ARAM Mayhem build'] : null,
-            c && c.key ? ['arena', 'Arena build'] : null
+            c && c.key ? ['arena', 'Arena build'] : null,
+            onBoard ? ['reset', 'Reset draft (clear both teams)'] : null
         ].filter(Boolean);
         menu.innerHTML = `<div class="dg-menu-h">${icon(id, 'dg-menu-ico')}${esc(nameOf(id))}${role ? ` <span>${esc(LANE[role] || role)}</span>` : ''}</div>` +
             items.map(([k, label]) => `<button type="button" class="dg-menu-i" data-menu="${k}">${esc(label)}</button>`).join('');
@@ -146,9 +150,12 @@
     menu.addEventListener('click', e => {
         const b = e.target.closest('[data-menu]');
         if (!b || !menuFor) return;
-        const { id, role, opp } = menuFor;
+        const { id, role, opp, side } = menuFor;
         closeMenu();
-        if (b.dataset.menu === 'hub') DD.openChampion(id, role);
+        if (b.dataset.menu === 'remove' && DD.clearSlot) DD.clearSlot(side, role);
+        else if (b.dataset.menu === 'reset' && DD.resetDraft) DD.resetDraft();
+        else if (b.dataset.menu === 'hub') DD.openChampion(id, role);
+        else if (b.dataset.menu === 'matchup' && DD.openMatchup) DD.openMatchup(id, role, opp);
         else if (b.dataset.menu === 'builds') DD.openBuilds(id, role);
         else if (b.dataset.menu === 'builds-vs') DD.openBuilds(id, role, opp);
         else if (b.dataset.menu === 'aram' && window.DDAram) { const c = champ(id); if (c) window.DDAram.selectByKey(Number(c.key)); }
@@ -342,6 +349,12 @@
         if (p.vsItems && p.vsItems.length) h += `<div class="fb-row"><span class="fb-m">Best items vs ${esc(p.oppName)}:</span> ${p.vsItems.map(i => `<span class="fb-item" title="${esc(i.name)}"><img src="${esc(i.img)}" alt="" onerror="this.style.visibility='hidden'"><em class="${i.wpa >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(i.wpa)}</em></span>`).join('')}</div>`;
         else if (p.opponent) h += `<div class="fb-row fb-m">Items against ${esc(p.oppName)}: open <button type="button" class="link-btn" data-fb-act="build">Build vs ${esc(p.oppName)}</button> (downloads that matchup on demand).</div>`;
         if (!p.opponent && p.blind && p.blind.counters && p.blind.counters.length) h += `<div class="fb-row"><span class="fb-m">Counters to watch:</span> ${p.blind.counters.slice(0, 4).map(c => `${icon(c.champion)}${esc(nameOf(c.champion))} <b class="delta-neg">${pts(c.d)}</b>`).join(' · ')}</div>`;
+        // your own note for this matchup (champion page > vs tab)
+        if (p.opponent && DD.matchupNote) {
+            const note = DD.matchupNote(p.champion, p.opponent);
+            h += note ? `<div class="fb-row fb-note"><span class="fb-m">Your note vs ${esc(p.oppName)}:</span> ${esc(note.text)} <button type="button" class="link-btn" data-fb-act="matchup">Edit</button></div>`
+                : `<div class="fb-row fb-m"><button type="button" class="link-btn" data-fb-act="matchup">Matchup page vs ${esc(p.oppName)}</button>: lane effect, your record and your notes.</div>`;
+        }
         if (DD.skillOrder && p.lane) h += DD.skillOrder.slot(p.champion, p.lane, { compact: true });   // skill order (skills-view.js)
         if (p.warnings.length) h += `<div class="fb-row fb-warn">${p.warnings.map(esc).join(' · ')}</div>`;
         planEl.innerHTML = h;
@@ -439,6 +452,7 @@
         else if (k === 'send') send(false);
         else if (k === 'send-replace') send(true);
         else if (k === 'hub' && c.pick) DD.openChampion(c.pick, c.lane);
+        else if (k === 'matchup' && c.pick && c.opp && DD.openMatchup) DD.openMatchup(c.pick, c.lane, c.opp);
         else if (k === 'live' && window.DDProfile) window.DDProfile.openFromOutside(null, 'live');
         else if (k === 'mini' && DD.mini) DD.mini.toggle().then(paint);
         else if (k === 'review' && window.DDProfile) window.DDProfile.openFromOutside(null, 'summary');

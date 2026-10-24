@@ -17,6 +17,27 @@
     const signed = n => (n == null ? '' : (n >= 0 ? '+' : '') + fmt1(n));
     const deltaCls = n => (n == null ? '' : n > 0.05 ? 'pos' : n < -0.05 ? 'neg' : 'flat');
     const LOW_APPEARANCE = 2;   // augment rows below this appearance rate (%) are dimmed
+    // arammayhem.com stopped listing augment win rates per champion (2026-10): then the rows keep the site's order for the champion
+    // and show the augment's tier / rank among its rarity and overall instead of WR and "vs champ"
+    const hasWr = list => (list || []).some(a => a.wr != null);
+    const augHead = list => (hasWr(list)
+        ? '<div class="aram-listhead aug"><span>Augment</span><span class="h-app">Appears</span><span class="h-wr">WR</span><span class="h-d">vs champ</span></div>'
+        : '<div class="aram-hint aram-nowr">arammayhem.com no longer publishes augment win rates per champion: these are in its recommended order for this champion, with each augment\'s tier in its rarity and overall.</div><div class="aram-listhead aug"><span>Augment</span><span class="h-app">Appears</span><span class="h-wr" title="Tier and rank among augments of this rarity">Tier</span><span class="h-d" title="Tier and rank among all augments">Overall</span></div>');
+    const tierTxt = (t, r) => (t ? `${t}${r != null ? ` #${r}` : ''}` : '–');
+    const tierCls = t => (t ? ' t-' + t[0].toLowerCase() : '');
+    function augRows(list, base) {
+        const wr = hasWr(list);
+        const augs = wr ? [...list].sort((x, y) => (y.wr || 0) - (x.wr || 0)) : [...list].sort((x, y) => (x.order || 0) - (y.order || 0));
+        if (!augs.length) return '<div class="aram-empty small">No augments of this rarity listed.</div>';
+        return augs.map(a => {
+            const d = a.wr != null && base != null ? a.wr - base : null;
+            const cells = wr ? `<span class="aram-wr">${fmt2(a.wr)}%</span><span class="aram-delta ${deltaCls(d)}">${signed(d)}</span>`
+                : `<span class="aram-wr aram-tier${tierCls(a.tier)}">${esc(tierTxt(a.tier, a.rank))}</span><span class="aram-delta aram-tier${tierCls(a.overallTier)}">${esc(tierTxt(a.overallTier, a.overallRank))}</span>`;
+            return `<div class="aram-arow${a.appearance != null && a.appearance < LOW_APPEARANCE ? ' low' : ''}">
+                ${a.icon ? `<img class="aram-aug" src="${esc(a.icon)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : '<span class="aram-aug"></span>'}
+                <span class="aram-aname">${esc(a.name)}</span><span class="aram-app">${a.appearance == null ? '–' : fmt2(a.appearance) + '%'}</span>${cells}</div>`;
+        }).join('');
+    }
 
     const S = {
         ready: false, active: false, tier: null, tierErr: null, ddByNorm: new Map(), ddById: new Map(), bySlug: new Map(),
@@ -382,16 +403,10 @@
                 ${c.balance.length ? ` &middot; Mayhem balance: ${c.balance.map(x => `<span class="aram-bal">${esc(x.dir)} ${esc(x.label)} ${esc(x.value)}</span>`).join(' ')}` : ''}</div>`;
             // augments
             const tabs = ['prismatic', 'gold', 'silver'];
-            html += `<h3>Augments ${DD.help ? DD.help('aram') : ''} <span class="aram-hint">sorted by win rate; dimmed = appeared in under ${LOW_APPEARANCE}% of games</span></h3>
+            html += `<h3>Augments ${DD.help ? DD.help('aram') : ''} <span class="aram-hint">${hasWr(c.augments[S.rarity]) ? 'sorted by win rate' : 'in the order arammayhem.com recommends'}; dimmed = appeared in under ${LOW_APPEARANCE}% of games</span></h3>
                 <div class="aram-tabs sm">${tabs.map(r => `<button class="aram-tab r-${r}${S.rarity === r ? ' on' : ''}" data-rarity="${r}">${r[0].toUpperCase() + r.slice(1)} (${c.augments[r].length})</button>`).join('')}</div>
-                <div class="aram-listhead aug"><span>Augment</span><span class="h-app">Appears</span><span class="h-wr">WR</span><span class="h-d">vs champ</span></div>`;
-            const augs = [...c.augments[S.rarity]].sort((x, y) => (y.wr || 0) - (x.wr || 0));
-            html += augs.length ? augs.map(a => {
-                const d = a.wr != null && base != null ? a.wr - base : null;
-                return `<div class="aram-arow${a.appearance != null && a.appearance < LOW_APPEARANCE ? ' low' : ''}">
-                    ${a.icon ? `<img class="aram-aug" src="${esc(a.icon)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : '<span class="aram-aug"></span>'}
-                    <span class="aram-aname">${esc(a.name)}</span><span class="aram-app">${fmt2(a.appearance)}%</span><span class="aram-wr">${fmt2(a.wr)}%</span><span class="aram-delta ${deltaCls(d)}">${signed(d)}</span></div>`;
-            }).join('') : '<div class="aram-empty small">No augments of this rarity listed.</div>';
+                ${augHead(c.augments[S.rarity])}`;
+            html += augRows(c.augments[S.rarity], base);
         }
         // Items: LoLalytics (regular ARAM) only
         const li = b.items && b.items.ok ? b.items.data : null;

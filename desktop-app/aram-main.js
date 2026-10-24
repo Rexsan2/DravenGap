@@ -24,7 +24,7 @@ const parsers = require('./aram-parsers');
 const { getSharedLcu } = require('./profile-lcu');
 
 const TTL_MS = 6 * 3600 * 1000;
-const PARSER_VERSION = 3;            // bump when a parser changes shape: older cache entries are then ignored
+const PARSER_VERSION = 4;            // bump when a parser changes shape: older cache entries are then ignored
 const MAX_PER_HOST = 2;
 const USER_AGENT = 'DraftDiff-personal/1.0 (personal desktop tool; on-demand fetches, 6h cache)';
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;

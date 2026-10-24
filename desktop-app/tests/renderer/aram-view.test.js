@@ -11,8 +11,11 @@ const tier = { patch: '26.19', dataDate: '2026-10-03', avgWr: 50.4, champions: [
     { slug: 'lux', name: 'Lux', wr: 49.0, tier: 'C', rank: 4, tags: ['Mage'], image: '', search: 'lux' },
     { slug: 'zed', name: 'Zed', wr: 47.5, tier: 'D', rank: 5, tags: ['Assassin'], image: '', search: 'zed' }] };           // middle = Yuumi 50.5
 const aug = (name, wr, app) => ({ slug: name.toLowerCase(), name, wr, appearance: app, icon: '' });
+// since 2026-10-14 arammayhem.com lists no augment win rate: the tier / rank in its rarity and overall, in the site's order (Zed here)
+const tiered = (name, order, tier, rank, overallTier, overallRank, app) => ({ slug: name.toLowerCase(), name, wr: null, appearance: app, icon: '', tier, rank, overallTier, overallRank, order });
 const page = slug => ({ meta: { name: slug, wr: 50, pick: 3, tier: 'A', rank: 9, patch: '26.19', dataDate: '2026-10-03' }, balance: [],
-    augments: { prismatic: [aug('Archmage', 55.1, 12)], gold: [aug('Blade Waltz', 53.2, 8)], silver: [] } });
+    augments: slug === 'zed' ? { prismatic: [tiered('Archmage', 1, 'A', 18, 'A', 51, 13.6), tiered('Eureka', 2, 'S', 3, 'S', 9, 13.2)], gold: [], silver: [] }
+        : { prismatic: [aug('Archmage', 55.1, 12)], gold: [aug('Blade Waltz', 53.2, 8)], silver: [] } });
 const KEY = { teemo: 17, ahri: 103, yuumi: 350, lux: 99, zed: 238 };
 
 (async () => {
@@ -42,6 +45,9 @@ const KEY = { teemo: 17, ahri: 103, yuumi: 350, lux: 99, zed: 238 };
         // below the middle with rerolls -> reroll; without -> no rerolls left; with a bench -> the bench comparison
         cs = { ...cs, mine: KEY.zed, mineSource: 'pick-intent' };
         a = await waitAdvice(/reroll is worth it/);
+        await h.waitFor(`/Eureka/.test(document.getElementById('aram-right').textContent)`, 8000);
+        const zr = await h.ev(`({ rows: [...document.querySelectorAll('#aram-right .aram-arow')].map(r => [...r.children].slice(1).map(x => x.textContent.trim()).join('|')), head: (document.querySelector('#aram-right .aram-listhead.aug') || {}).textContent, text: document.getElementById('aram-right').textContent.replace(/\\s+/g, ' ') })`);
+        R.ok('augments without win rates: the site order, tier in the rarity and overall (no "-%")', JSON.stringify(zr.rows) === '["Archmage|13.60%|A #18|A #51","Eureka|13.20%|S #3|S #9"]' && /Tier/.test(zr.head) && /Overall/.test(zr.head) && /no longer publishes augment win rates/.test(zr.text) && !/–%|-%/.test(zr.text), zr);
         R.ok('below the tier list middle with rerolls left: a reroll is worth it', a && /Bench opens soon: a reroll is worth it, 80% of champions have a higher win rate than Zed/.test(a.text) && /go/.test(a.cls) && /rerolls left: 2/.test(a.text), a);
         R.ok('your champion changed, so its build follows', await h.waitFor(`document.querySelector('#aram-root .aram-bhead h2') && document.querySelector('#aram-root .aram-bhead h2').textContent === 'Zed'`, 8000));
         cs = { ...cs, rerolls: 0 };

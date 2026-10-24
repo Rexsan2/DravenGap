@@ -1,4 +1,4 @@
-// Syntax check: every desktop-app/*.js (CommonJS and ES modules) and every inline <script> in index.html.
+// Syntax check: every desktop-app/*.js (CommonJS and ES modules), every inline <script> in index.html, and the test files.
 const fs = require('fs'), path = require('path'), vm = require('vm'), Module = require('module'), os = require('os');
 const { spawnSync } = require('child_process');
 const { APP, scratch } = require('../lib/common');
@@ -20,10 +20,19 @@ for (const f of fs.readdirSync(APP).filter(f => f.endsWith('.js')).sort()) {
     try { new vm.Script(Module.wrap(src), { filename: f }); } catch (e) { fail(f, e); }
 }
 
+// the tests themselves (a syntax error in a renderer test shows Electron's "JavaScript error in the main process" box)
+let testFiles = 0;
+for (const dir of ['tests/lib', 'tests/unit', 'tests/renderer']) {
+    for (const f of fs.readdirSync(APP + dir).filter(f => f.endsWith('.js')).sort()) {
+        testFiles++;
+        try { new vm.Script(Module.wrap(fs.readFileSync(path.join(APP, dir, f), 'utf8')), { filename: dir + '/' + f }); } catch (e) { fail(dir + '/' + f, e); }
+    }
+}
+
 const html = fs.readFileSync(APP + 'index.html', 'utf8');
 const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
 inline.forEach((src, i) => { try { new vm.Script('(function(){\n' + src + '\n})', { filename: 'index.html#script' + (i + 1) }); } catch (e) { fail('index.html inline script ' + (i + 1), e); } });
 
-console.log(`checked ${fs.readdirSync(APP).filter(f => f.endsWith('.js')).length} files + ${inline.length} inline scripts`);
+console.log(`checked ${fs.readdirSync(APP).filter(f => f.endsWith('.js')).length} files + ${inline.length} inline scripts + ${testFiles} test files`);
 if (bad) { console.log('FAIL', bad, 'syntax errors'); process.exit(1); }
 console.log('ALL OK');

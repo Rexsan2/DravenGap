@@ -24,5 +24,13 @@ console.log('ahri boots',a.boots.length,'slot4',a.slots[4].length,'ALL OK');
 // 2026-10 page layout: "<h3 ...>Prismatic Augments</h3>", attributes on every tag
 const nw=P.parseChampionPage(rd('b_teemo_2026-10.html'));
 assert.deepStrictEqual([nw.augments.prismatic.length,nw.augments.gold.length,nw.augments.silver.length],[6,6,6],'augments in the new layout');
-assert.deepStrictEqual(nw.augments.prismatic[0],{slug:'archmage',name:'Archmage',icon:'https://arammayhem.com/augments/Archmage_mayhem_augment.webp',appearance:13.52,wr:52.78});
+assert.deepStrictEqual(nw.augments.prismatic[0],{slug:'archmage',name:'Archmage',icon:'https://arammayhem.com/augments/Archmage_mayhem_augment.webp',appearance:13.52,wr:52.78,tier:'S',rank:1,overallTier:'S',overallRank:6,order:1});
 console.log('2026-10 layout ok');
+// 2026-10-14: no augment win rate any more; tier / rank in its rarity and overall, in the site's order for the champion
+const nr=P.parseChampionPage(rd('b_teemo_2026-10-14.html'));
+assert.deepStrictEqual([nr.augments.prismatic.length,nr.augments.gold.length,nr.augments.silver.length],[6,6,6],'augments without win rates');
+assert.deepStrictEqual(nr.augments.prismatic[0],{slug:'archmage',name:'Archmage',icon:'https://arammayhem.com/augments/Archmage_mayhem_augment.webp',appearance:13.57,wr:null,tier:'A',rank:18,overallTier:'A',overallRank:51,order:1});
+assert.deepStrictEqual(nr.augments.silver[5].tier+'|'+nr.augments.silver[5].rank+'|'+nr.augments.silver[5].order,'S-|4|6');
+assert(['prismatic','gold','silver'].every(r=>nr.augments[r].every((a,i)=>a.order===i+1&&a.tier&&a.overallRank>0&&a.appearance>0)),'every card has its tier');
+assert.strictEqual(nr.meta.wr,53.38);
+console.log('2026-10-14 layout ok');

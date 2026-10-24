@@ -2,6 +2,9 @@
 // Pure HTML parsers for the ARAM Mayhem mode (no I/O, no dependencies; unit-tested against recorded pages).
 //   parseTierList(html)       arammayhem.com/tier-list/            -> { patch, dataDate, champions: [...] }
 //   parseChampionPage(html)   arammayhem.com/build/<slug>/         -> { meta, balance, augments{prismatic,gold,silver} }  (no items: items come from LoLalytics only)
+//                             augment: { slug, name, icon, appearance, wr, tier, rank, overallTier, overallRank, order }. Since 2026-10-14 the
+//                             site lists no per-champion augment win rate (wr = null): its order for the champion plus the augment's tier
+//                             and rank (within its rarity, and overall) instead.
 //   parseLolalytics(html)     lolalytics.com/lol/<c>/aram/build/   -> { wr, games, rank, spells, start, core, boots, slots }
 // Parsers are tolerant: a missing section yields an empty list, never an exception; only a page that has none of the
 // expected markers returns null (so the caller can report "site layout changed").
@@ -74,8 +77,13 @@ function parseAugmentGroups(c) {
             if (!name) continue;
             const icon = /<img[^>]*?src="([^"]*)"/.exec(card);
             const app = /Appearance rate:\s*<span[^>]*>([\d.,]+)%<\/span>/.exec(card), wr = /Win rate:\s*<span[^>]*>([\d.,]+)%<\/span>/.exec(card);
-            if (!app && !wr) continue;
-            out[labels[i].rarity].push({ slug: starts[k].slug, name: decodeEntities(name[1]), icon: icon ? absUrl(icon[1]) : null, appearance: app ? num(app[1]) : null, wr: wr ? num(wr[1]) : null });
+            // "A · #18" (tier among augments of this rarity) and "Overall A · #51"
+            const rk = which => { const m = new RegExp(`data-recommendation-rank="${which}"[^>]*>(?:Overall\\s+)?([SABCDF][+-]?)\\s*(?:·|&middot;|&#183;)?\\s*#(\\d+)`).exec(card); return m ? { tier: m[1], rank: num(m[2]) } : null; };
+            const rr = rk('rarity'), ro = rk('overall');
+            if (!app && !wr && !rr) continue;
+            const list = out[labels[i].rarity];
+            list.push({ slug: starts[k].slug, name: decodeEntities(name[1]), icon: icon ? absUrl(icon[1]) : null, appearance: app ? num(app[1]) : null, wr: wr ? num(wr[1]) : null,
+                tier: rr ? rr.tier : null, rank: rr ? rr.rank : null, overallTier: ro ? ro.tier : null, overallRank: ro ? ro.rank : null, order: list.length + 1 });
         }
     }
     return out;

@@ -28,6 +28,7 @@
     const UPDATE_COOLDOWN = 30000;
 
     const S = {
+        replay: {},   // match id -> replay state (replay-main.js)
         inited: false, acct: null, profile: null, stale: false, group: 'all', matches: [], nextStart: 0, hasMore: false, loadingMatches: false, matchTok: 0,
         ledger: null, ledgerGroup: 'all', tab: 'summary', expanded: new Set(), error: null, loadingProfile: false, lastUpdate: 0, cooldownUntil: 0,
         live: null, liveLoading: false, liveBadge: false, livePhase: null, liveBuf: {}, backfill: null, recent: [], queues: {}, token: 0, scout: {}, seasons: null, seasonQ: 'RANKED_SOLO_5x5', seasonAll: false, seasonRec: false,
@@ -238,6 +239,7 @@
         if (!r.ok) { S.matchError = r; paintMatches(); return; }
         if (r.puuid && r.puuid !== S.profile.puuid) S.profile.puuid = r.puuid; // the id was re-resolved (API key changed)
         S.matchError = r.warning || null;
+        S.matchNote = r.note || null;
         const seen = new Set(S.matches.map(m => m.id));
         for (const m of r.matches) if (!seen.has(m.id)) S.matches.push(m);
         S.nextStart = r.nextStart; S.hasMore = r.hasMore;
@@ -833,6 +835,7 @@
         let html = `<div class="pf-qtabs">${GROUP_ORDER.map(g => `<button class="pf-qtab ${g === S.group ? 'on' : ''}" data-act="group" data-g="${g}">${GROUP_LABEL[g]}</button>`).join('')}
             <span class="pf-grow"></span>${S.champFilter ? champFilterChip() : `<input class="pf-cfilter" id="pf-cfilter" list="pf-champ-list" placeholder="Filter by champion" spellcheck="false" autocomplete="off" title="Show only one champion's games (or click a champion's name in Profile)"><datalist id="pf-champ-list">${champOptions()}</datalist>`}</div>`;
         if (S.matchError) html += errHtml(S.matchError);
+        if (S.matchNote) html += `<div class="pf-muted pf-keyless-note">${esc(S.matchNote)}</div>`;
         if (!S.matches.length && S.loadingMatches) html += '<div class="pf-sk-row"></div>'.repeat(5);
         else if (!S.matches.length) html += `<div class="pf-empty-state">No ${S.group === 'all' ? '' : GROUP_LABEL[S.group] + ' '}games${S.champFilter ? ` on ${esc(champName(S.champFilter))}` : ''} found${S.champFilter && S.hasMore ? ' yet' : ''}.${S.champFilter && S.hasMore ? '<br><button class="pf-btn" data-act="more">Look further back</button>' : ''}</div>`;
         else html += lastGameCard() + S.matches.map(matchRow).join('');
@@ -1120,21 +1123,46 @@
         return `<ul class="pf-rv-swings">${out.sort((a, b) => a.from - b.from).map(c => `<li><b>${c.from}–${c.to} min</b>: your team <b class="${c.d > 0 ? 'pf-pos' : 'pf-neg'}">${c.d > 0 ? 'gained' : 'lost'} ${num(Math.abs(c.d))} gold</b></li>`).join('')}</ul>`;
     }
     // Summoner's Rift map: x 0-14870, y 0-14980 (match-v5 positions); y grows upwards
+    // review map hover box: shown at once next to the marker under the mouse (SVG <title> tooltips need the mouse on a 1-px line)
+    function hideMapTip() { root.querySelectorAll('.pf-rv-tip').forEach(x => { x.hidden = true; }); root.querySelectorAll('.pf-rv-mk.on').forEach(x => x.classList.remove('on')); }
+    root.addEventListener('mouseover', e => {
+        const mk = e.target.closest && e.target.closest('.pf-rv-mk');
+        if (!mk) { if (e.target.closest && e.target.closest('.pf-rv-map')) hideMapTip(); return; }
+        const wrap = mk.closest('.pf-rv-mapwrap'), tip = wrap && wrap.querySelector('.pf-rv-tip');
+        if (!tip) return;
+        hideMapTip();
+        mk.classList.add('on');
+        tip.textContent = mk.dataset.tip;
+        tip.hidden = false;
+        const w = wrap.getBoundingClientRect(), r = mk.getBoundingClientRect();
+        tip.style.left = Math.max(0, Math.min(r.left - w.left + r.width / 2 - tip.offsetWidth / 2, w.width - tip.offsetWidth)) + 'px';
+        tip.style.top = (r.top - w.top - tip.offsetHeight - 6) + 'px';
+    });
+    root.addEventListener('mouseleave', hideMapTip, true);
     function reviewMap(m, p, T) {
         if (!T.kills) return '<div class="pf-muted">Loading the deaths and kills…</div>';
         if (m.mode && m.mode !== 'CLASSIC') return '<div class="pf-muted">The map is for Summoner\u2019s Rift games.</div>';
-        const S2 = 220, X = v => (v / 14870 * S2).toFixed(1), Y = v => (S2 - v / 14980 * S2).toFixed(1);
+        const S2 = 480, X = v =>   // drawn at 480 px (scales down to fit its column)
+             (v / 14870 * S2).toFixed(1), Y = v => (S2 - v / 14980 * S2).toFixed(1);
         const nm = pid => { const q = m.players.find(x => x.pid === pid); return q ? champName(q.champId) : 'a tower or minions'; };
         const mine = T.kills.filter(k => k.v === p.pid || k.p === p.pid || k.as.includes(p.pid));
+        // each marker: an instant tooltip (data-tip, shown by the map's own hover box) over a wide invisible hit circle, and with the
+        // replay available a click jumps it to 15 s before that moment
+        const rs = S.replay[m.id], can = rs && !rs.error && ['watch', 'download', 'downloading'].includes(rs.state);
+        const assists = k => k.as.filter(a => a !== p.pid).map(nm);
         const dots = mine.map(k => {
-            const died = k.v === p.pid, kill = k.p === p.pid;
-            const tip = `${k.m.toFixed(0)} min: ${died ? `died to ${nm(k.p)}` : kill ? `killed ${nm(k.v)}` : `assist on ${nm(k.v)}`}`;
-            return died ? `<g class="d"><title>${esc(tip)}</title><path d="M${X(k.x) - 4} ${Y(k.y) - 4}l8 8m0-8l-8 8"/></g>` : `<circle class="${kill ? 'k' : 'a'}" cx="${X(k.x)}" cy="${Y(k.y)}" r="${kill ? 4 : 2.5}"><title>${esc(tip)}</title></circle>`;
+            const died = k.v === p.pid, kill = k.p === p.pid, t = Math.max(0, Math.round(k.m * 60 - 15));
+            const help = assists(k);
+            const tip = `${fmtClock(k.m * 60)} · ${died ? `you died to ${nm(k.p)}${help.length ? ` (with ${help.join(', ')})` : ''}` : kill ? `you killed ${nm(k.v)}` : `assist: ${nm(k.p)} killed ${nm(k.v)}`}${can ? ` · click to watch from ${fmtClock(t)}` : ''}`;
+            const act = can ? ` data-act="replayjump" data-id="${esc(m.id)}" data-t="${t}"` : '';
+            const mark = died ? `<path d="M${X(k.x) - 6} ${Y(k.y) - 6}l12 12m0-12l-12 12"/>` : `<circle cx="${X(k.x)}" cy="${Y(k.y)}" r="${kill ? 6 : 4}"/>`;
+            return `<g class="pf-rv-mk ${died ? 'd' : kill ? 'k' : 'a'}${can ? ' go' : ''}" data-tip="${esc(tip)}"${act}><circle class="hit" cx="${X(k.x)}" cy="${Y(k.y)}" r="13"/>${mark}</g>`;
         }).join('');
         const nd = mine.filter(k => k.v === p.pid).length, nk = mine.filter(k => k.p === p.pid).length;
         const early = mine.filter(k => k.v === p.pid && k.m < 15).length;
-        return `<div class="pf-rv-mapwrap"><svg class="pf-rv-map" viewBox="0 0 ${S2} ${S2}" width="${S2}" height="${S2}"><image href="${esc(base())}/cdn/${esc(patch())}/img/map/map11.png" width="${S2}" height="${S2}" opacity=".55"/>${dots}</svg>
-            <div class="pf-muted">✕ your ${nd} death${nd === 1 ? '' : 's'}${early ? ` (${early} before 15 min)` : ''} · ● your ${nk} kill${nk === 1 ? '' : 's'} · small dots: assists. Hover for the time and who.</div></div>`;
+        return `<div class="pf-rv-mapwrap"><svg class="pf-rv-map" viewBox="0 0 ${S2} ${S2}"><image href="${esc(base())}/cdn/${esc(patch())}/img/map/map11.png" width="${S2}" height="${S2}" opacity=".7"/>${dots}</svg>
+            <div class="pf-rv-tip" hidden></div>
+            <div class="pf-muted">✕ your ${nd} death${nd === 1 ? '' : 's'}${early ? ` (${early} before 15 min)` : ''} · ● your ${nk} kill${nk === 1 ? '' : 's'} · small dots: assists. Hover a mark for the time and who${can ? '; click it to watch that moment in the replay' : ''}.</div></div>`;
     }
     // completed items (no further upgrade, 2,000+ gold) in the order bought, against the saved Coachless table for this champion and lane
     const BUILDS_POS = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', BOTTOM: 'BOTTOM', UTILITY: 'SUPPORT' };
@@ -1163,6 +1191,40 @@
         const skipped = rows.filter(r => r.pp >= 0.9 && r.adj > 0 && r.pickRate >= 0.02 && !done.some(d => d.i === r.id)).sort((a, b) => b.adj - a.adj).slice(0, 2);
         return h + (skipped.length ? `<div class="pf-rv-note">Strong in the data and not in your build: ${skipped.map(r => `${itemImg(r.id)} <b>${esc(r.name)}</b> <span class="pf-pos">+${(r.adj * 100).toFixed(1)} WPA</span>`).join(' · ')} <span class="pf-muted">(Coachless, Emerald+, ${esc((data.patches || []).join(', '))})</span></div>` : '<div class="pf-muted">Every strong item in the data for this champion is in your build, or none is clearly better.</div>');
     }
+    // Replay: your deaths (and the 3 biggest fights you were in) with a button that opens the replay in the client and jumps
+    // 15 s before that moment (replay-main.js). Your own games only: the client downloads replays of its account's games.
+    const fmtClock = sec => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    function reviewReplay(m, p, T) {
+        if (!S.profile || !S.profile.isOwner || !T.kills) return '';
+        const nm = pid => { const q = m.players.find(x => x.pid === pid); return q ? champName(q.champId) : 'a tower or minions'; };
+        const deaths = T.kills.filter(k => k.v === p.pid);
+        const rs = S.replay[m.id];
+        if (!rs) loadReplayState(m);
+        const status = !rs ? 'Checking the replay…' : rs.error ? esc(rs.error)
+            : rs.state === 'watch' ? 'Replay ready.' : rs.state === 'download' ? 'The replay will be downloaded from the client (about 15 MB) when you press a button.'
+            : rs.state === 'downloading' ? 'Downloading the replay…' : rs.state === 'incompatible' || rs.state === 'missingOrExpired' ? 'This replay is no longer available (the client only keeps replays of the current patch).' : `Replay: ${esc(rs.state || 'unknown')}`;
+        const can = rs && !rs.error && ['watch', 'download', 'downloading'].includes(rs.state);
+        const apiNote = rs && rs.ok && !rs.apiEnabled
+            ? `<div class="pf-rv-note">To jump straight to a moment, the game's Replay API has to be on (one setting in the game's own settings file; a backup is kept). <button type="button" class="pf-btn pf-small" data-act="replayapi" data-id="${esc(m.id)}">Turn on replay control</button></div>` : '';
+        const rows = deaths.map((k, i) => `<li><b>${fmtClock(k.m * 60)}</b> died to ${esc(nm(k.p))}${can ? ` <button type="button" class="pf-btn pf-small" data-act="replayjump" data-id="${esc(m.id)}" data-t="${Math.max(0, Math.round(k.m * 60 - 15))}">Watch from ${fmtClock(Math.max(0, k.m * 60 - 15))}</button>` : ''}</li>`).join('');
+        return `<div class="pf-sec-h">Replay</div><div class="pf-rv-replay"><div class="pf-muted">${status}${rs && rs.msg ? ' ' + esc(rs.msg) : ''}</div>${apiNote}
+            ${deaths.length ? `<ul class="pf-rv-deaths">${rows}</ul>` : '<div class="pf-muted">No deaths in this game.</div>'}
+            ${can ? `<button type="button" class="pf-btn pf-small" data-act="replayopen" data-id="${esc(m.id)}">Open the replay</button>` : ''}</div>`;
+    }
+    async function loadReplayState(m) {
+        S.replay[m.id] = { loading: true };
+        const r = await api.invoke('lcu:replay-state', { gameId: m.id }).catch(e => ({ ok: false, error: e.message }));
+        S.replay[m.id] = r && r.code === 'NO_CLIENT' ? { error: 'Open the League client to watch replays.' } : r || { error: 'No answer from the client.' };
+        repaintMatch(m.id);
+    }
+    async function replayJump(id, t) {
+        const m = S.matches.find(x => x.id === id), me = m && m.players.find(p => p.puuid === S.profile.puuid);
+        const st = S.replay[id] = Object.assign({}, S.replay[id], { msg: 'Opening the replay in the client…' }); repaintMatch(id);
+        let r = st.running ? { ok: true } : await api.invoke('lcu:replay-open', { gameId: id }).catch(e => ({ ok: false, error: e.message }));
+        if (r.ok && t != null) { S.replay[id].msg = 'Waiting for the replay to load…'; repaintMatch(id); r = await api.invoke('lcu:replay-seek', { time: t, player: me && me.name }).catch(e => ({ ok: false, error: e.message })); }
+        S.replay[id] = Object.assign({}, S.replay[id], { msg: r.ok ? (t != null ? `Jumped to ${fmtClock(t)}.` : 'Opened.') : r.error, running: r.ok || S.replay[id].running });
+        repaintMatch(id);
+    }
     function reviewTab(m, me) {
         ensureTimeline(m, false, 2);
         const t = S.tl[m.id];
@@ -1172,7 +1234,7 @@
             <div class="pf-rv-col"><div class="pf-sec-h">Your lane, ahead (+) or behind (−)</div>${reviewLane(m, p, T)}
               <div class="pf-sec-h">What moved the game</div>${reviewSwings(m, p, T)}
               <div class="pf-sec-h">Your items</div>${reviewItems(m, p, T)}</div>
-            <div class="pf-rv-col"><div class="pf-sec-h">Deaths and kills</div>${reviewMap(m, p, T)}</div></div>`;
+            <div class="pf-rv-col pf-rv-mapcol"><div class="pf-sec-h">Deaths and kills ${help('review')}</div>${reviewMap(m, p, T)}${reviewReplay(m, p, T)}</div></div>`;
     }
 
     // ---------- live tab ----------
@@ -1388,22 +1450,36 @@
     }
 
     // ---------- events ----------
-    // Clicking a champion portrait opens its Coachless builds (Builds view). In match rows/scoreboards the player's lane
-    // picks the role; elsewhere the champion's usual role. The Build tab's player picker keeps its own meaning.
+    // Clicking a champion portrait opens its champion page (builds are a tab there; right-click keeps the quick menu). In match
+    // rows/scoreboards the player's lane picks the role; elsewhere the champion's usual role. Clicking the lane opponent of the
+    // profile's player in a match opens the matchup page (their champion vs that one). The Build tab's player picker keeps its own meaning.
     const BUILDS_ROLE = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', BOTTOM: 'BOTTOM', UTILITY: 'SUPPORT' };
     function openChampBuilds(e) {
         const pic = e.target.closest('img.pf-champ, img.pf-pimg, img.pf-cs-img, img.pf-lv-img, img.pf-ban');
-        if (!pic || !root.contains(pic) || pic.closest('.pf-pick') || !window.DD.openBuilds) return false;
-        const m = /\/img\/champion\/([^/.]+)\.png/.exec(pic.getAttribute('src') || '');
+        if (!pic || !root.contains(pic) || pic.closest('.pf-pick') || !window.DD.openChampion) return false;
+        const src = pic.getAttribute('src') || '';
+        const m = /\/img\/champion\/([^/.]+)\.png/.exec(src);
         if (!m) return false;
-        const posEl = pic.closest('[data-pos]');
+        const id = decodeURIComponent(m[1]);
+        const posEl = pic.closest('[data-pos]'), role = posEl ? BUILDS_ROLE[posEl.dataset.pos] || null : null;
         e.preventDefault(); e.stopPropagation();
-        window.DD.openBuilds(decodeURIComponent(m[1]), posEl ? BUILDS_ROLE[posEl.dataset.pos] || null : null);
+        // the lane opponent in a match: matchup page
+        const card = pic.closest('.pf-match'), match = card && S.matches.find(x => x.id === card.dataset.id);
+        const me = match && S.profile && match.players.find(p => p.puuid === S.profile.puuid);
+        if (me && posEl && window.DD.openMatchup) {
+            const p = match.players.find(q => champImg(q.champId) === src);
+            if (p && p.team !== me.team && p.pos && p.pos === me.pos) {
+                const mine = /\/img\/champion\/([^/.]+)\.png/.exec(champImg(me.champId) || '');
+                if (mine) { window.DD.openMatchup(decodeURIComponent(mine[1]), role, id); return true; }
+            }
+        }
+        window.DD.openChampion(id, role);
         return true;
     }
     async function onClick(e) {
         if (openChampBuilds(e)) return;
         const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+        if (t.classList.contains('pf-rv-mk')) hideMapTip();
         const act = t.dataset.act;
         if (act === 'open') { e.stopPropagation(); if (t.dataset.t) openAccount({ gameName: t.dataset.n, tagLine: t.dataset.t, platform: (t.closest('.pf-lv-row') && S.live && S.live.platform) || (S.acct || DEFAULT_ACCOUNT).platform }); }
         else if (act === 'home') openOwner();
@@ -1414,6 +1490,13 @@
             repaintMatch(id);
         }
         else if (act === 'mtab') { S.mtab[t.dataset.id] = t.dataset.t; repaintMatch(t.dataset.id); }
+        else if (act === 'replayjump') replayJump(t.dataset.id, Number(t.dataset.t));
+        else if (act === 'replayopen') replayJump(t.dataset.id, null);
+        else if (act === 'replayapi') {
+            const r = await api.invoke('lcu:replay-enable-api').catch(e => ({ ok: false, error: e.message }));
+            S.replay[t.dataset.id] = Object.assign({}, S.replay[t.dataset.id], { apiEnabled: !!r.ok, msg: r.ok ? 'Replay control is on (takes effect the next time a replay opens).' : r.error });
+            repaintMatch(t.dataset.id);
+        }
         else if (act === 'review') {   // the post-game card: open that match on its Review tab
             const id = t.dataset.id; S.expanded.add(id); S.mtab[id] = 'review'; repaintMatch(id);
             const card = root.querySelector(`.pf-match[data-id="${CSS.escape(id)}"]`); if (card) card.scrollIntoView({ block: 'start', behavior: 'smooth' });

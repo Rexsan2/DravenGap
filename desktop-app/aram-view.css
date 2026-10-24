@@ -80,3 +80,7 @@
 #aram-root .aram-apply-t { font-weight: 600; font-size: 0.85rem; }
 #aram-root .aram-apply-msg { flex-basis: 100%; font-size: 0.78rem; color: var(--text-secondary); }
 #aram-root .aram-apply-msg:empty { display: none; }
+#aram-root .aram-nowr { display: block; margin: 0 0 6px; }
+#aram-root .aram-tier { text-align: right; font-weight: 700; font-size: 0.82rem; }
+#aram-root .aram-tier.t-s { color: #f0b232; } #aram-root .aram-tier.t-a { color: var(--green-pos); } #aram-root .aram-tier.t-b { color: var(--accent-color); }
+#aram-root .aram-tier.t-c, #aram-root .aram-tier.t-d, #aram-root .aram-tier.t-f { color: var(--text-secondary); }
