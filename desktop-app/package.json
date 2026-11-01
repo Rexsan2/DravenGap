@@ -23,7 +23,8 @@
       "!tests${/*}",
       "!tools${/*}",
       "!.personal${/*}",
-      "!dist${/*}"
+      "!dist${/*}",
+      "!dist-public${/*}"
     ],
     "win": {
       "target": "nsis",
