@@ -361,6 +361,11 @@
 #profile-root .pf-goals .pf-card-h { gap: 10px; justify-content: flex-start; }
 #profile-root .pf-goal-in { width: 64px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 5px; padding: 2px 5px; text-align: right; font-variant-numeric: tabular-nums; }
 #profile-root .pf-lenbar { display: inline-block; height: 6px; margin-left: 8px; border-radius: 3px; background: var(--accent-color); opacity: .5; vertical-align: middle; }
+#profile-root .pf-nowrap { white-space: nowrap; }
+#profile-root .pf-ci { position: relative; display: inline-block; width: 36px; height: 6px; margin-right: 6px; border-radius: 3px; background: var(--border-color); vertical-align: middle; }
+#profile-root .pf-ci::after { content: ""; position: absolute; left: 50%; top: -2px; width: 1px; height: 10px; background: var(--text-secondary); }
+#profile-root .pf-ci-bar { position: absolute; top: 0; height: 6px; border-radius: 3px; background: var(--text-secondary); opacity: .7; }
+#profile-root .pf-ci-bar.pos { background: var(--green-pos); opacity: 1; } #profile-root .pf-ci-bar.neg { background: var(--red-neg); opacity: 1; }
 
 /* Review tab (a match: lane at 10/15/20, gold swings, deaths map, items vs Coachless) */
 #profile-root .pf-review { display: flex; gap: 18px; flex-wrap: wrap; }

@@ -29,5 +29,14 @@ ok(SM.skillsUrl('MonkeyKing', 'JUNGLE') === 'https://lolalytics.com/lol/wukong/b
     r = await h['build:skills']({}, { champion: '../x', role: 'MIDDLE' });
     const r2 = await h['build:skills']({}, { champion: 'Ahri', role: 'ADC' });
     ok(!r.ok && r.code === 'BAD_REQUEST' && !r2.ok && fetched.length === 2, 'bad champion or role: refused without a request');
+    // the game-length card's Time Period / Rank: patch and tier in the URL, a cache entry per combination, bad values refused
+    ok(SM.skillsUrl('Ahri', 'MIDDLE', '16.18', 'platinum_plus').endsWith('lane=middle&tier=platinum_plus&patch=16.18') && SM.skillsUrl('Ahri', 'MIDDLE', '30', 'all').endsWith('tier=all&patch=30'), 'URL with patch and tier');
+    r = await h['build:skills']({}, { champion: 'Ahri', role: 'MIDDLE', patch: '16.18', tier: 'platinum_plus' });
+    ok(r.ok && r.data.length.length === 7 && fetched.length === 3 && fetched[2].endsWith('tier=platinum_plus&patch=16.18'), 'a period / rank is its own request');
+    r = await h['build:skills']({}, { champion: 'Ahri', role: 'MIDDLE', patch: '16.18', tier: 'platinum_plus' });
+    const r3 = await h['build:skills']({}, { champion: 'Ahri', role: 'MIDDLE', patch: '7', tier: 'platinum_plus' });
+    ok(r.ok && r3.ok && fetched.length === 4 && fetched[3].endsWith('patch=7'), 'cached per combination; a day window is another');
+    const bad = await Promise.all([{ patch: '16.18&x=1' }, { patch: '99' }, { tier: 'gold&x' }, { tier: '../a' }].map(o => h['build:skills']({}, { champion: 'Ahri', role: 'MIDDLE', ...o })));
+    ok(bad.every(x => !x.ok && x.code === 'BAD_REQUEST') && fetched.length === 4, 'odd patch or tier values: refused without a request');
     console.log('ALL OK', n, 'checks'); process.exit(0);
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

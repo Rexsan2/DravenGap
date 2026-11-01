@@ -4,6 +4,7 @@ const H = require('../lib/renderer-harness');
 const { APP, fixture } = require('../lib/common');
 const R = H.results();
 const skills = require(APP + 'aram-parsers').parseLolalyticsSkills(fixture('lolalytics/ahri_middle_build.html'));
+const skillCalls = [];   // build:skills requests: the game-length card passes the Time Period / Rank
 
 const tier = { patch: '26.19', dataDate: '2026-10-03', avgWr: 50.1, champions: [
     { slug: 'ahri', name: 'Ahri', wr: 51.7, tier: 'A', rank: 31, tags: ['Mage'], image: '', search: 'ahri' },
@@ -21,7 +22,7 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
             'profile:me': () => ({ ok: true, me: { gameName: 'TestOwner', tagLine: 'META', platform: 'EUW1' }, lcu: true, phase: 'None' }),
             // the hub asks the main process which account is the owner's (client, else the last one seen, else Settings)
             'profile:owner': () => ({ ok: true, owner: { gameName: 'TestOwner', tagLine: 'META', platform: 'EUW1', puuid: null }, source: 'last' }),
-            'build:skills': (e, a) => (a.champion === 'Ahri' && a.role === 'MIDDLE' ? { ok: true, data: skills, fetchedAt: Date.now() } : { ok: false, error: 'no data' }),
+            'build:skills': (e, a) => { skillCalls.push(a); return a.champion === 'Ahri' && a.role === 'MIDDLE' && a.patch !== '16.17' ? { ok: true, data: skills, fetchedAt: Date.now() } : { ok: false, error: 'no data' }; },
             'profile:champ-summary': (e, a) => (a && a.champId === 103 && a.gameName === 'TestOwner' ? summary : { ok: false, error: 'unexpected ' + JSON.stringify(a) }),
             'aram:tier-list': () => ({ ok: true, data: tier, fetchedAt: Date.now() }),
             'aram:champion': (e, a) => (a.slug === 'ahri' ? { ok: true, data: ahriPage, fetchedAt: Date.now() } : { ok: false, error: 'no' }),
@@ -44,6 +45,8 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
         const data = await h.ev(`DD.championData('Ahri', 'MIDDLE').then(d => ({ wr: d.roles.MIDDLE.wr, akali: (d.matchups.find(m => m.champion === 'Akali') || {}).mean, n: d.matchups.length, syn: Object.keys(d.synergies) }))`);
         R.ok('overview: win rate by game length (7 bars) and the skill order', await h.waitFor(`document.querySelectorAll('#champion-root .sk-len .sk-lb').length === 7 && /Q > W > E/.test((document.querySelector('#champion-root .sk-row:not(.sk-muted)') || {}).textContent || '')`, 8000),
             await h.ev(`(document.querySelector('#champion-root .sk-len') || {}).textContent`));
+        R.ok('overview: every game-length bar has a 95% range whisker, and its tooltip says it', await h.ev(`(() => { const b = [...document.querySelectorAll('#champion-root .sk-len .sk-lb')]; return b.length === 7 && b.every(x => x.querySelector('.sk-ci') && /95% range [0-9]/.test(x.title)); })()`),
+            await h.ev(`[...document.querySelectorAll('#champion-root .sk-len .sk-lb')].map(x => x.title)`));
         R.ok('overview: Mid role, base WR and the data chip', /Mid/.test(head.role) && head.big === (data.wr * 100).toFixed(2) + '%' && /Platinum\+/.test(head.chip), { head, data });
         R.ok('hub matchup = the draft\'s own number for Ahri vs Akali', draftVsAkali != null && Math.abs(data.akali - draftVsAkali) < 1e-12, { hub: data.akali, draft: draftVsAkali });
 
@@ -90,6 +93,23 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
             const first = document.querySelector('.dg-pal-item'); const txt = first.textContent; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); await new Promise(r => setTimeout(r, 300)); return txt; })()`);
         await h.waitFor(`/Ahri/.test(document.querySelector('#champion-root .ch-name h2').textContent)`, 10000);
         R.ok('Ctrl+K: the first champion result is its page', /Ahri/.test(pal) && /Champion page/.test(pal), pal);
+        // win rate by game length follows the Time Period / Rank
+        const cur = await h.ev(`DD.lolalyticsPeriod().pages[0]`);
+        R.ok('game length: asks LoLalytics for the selected rank and the current patch', /^\d+\.\d+$/.test(cur) && skillCalls.some(a => a.tier === 'platinum_plus' && a.patch === cur), skillCalls.slice(-3));
+        const pooled = await h.ev(`(async () => {
+            const real = DD.lolalyticsPeriod; DD.lolalyticsPeriod = () => ({ pages: ['16.19', '16.18', '16.17'], label: 'Last 3 patches', pooled: true, rank: 'platinum_plus', rankLabel: 'Platinum+' });
+            const box = document.createElement('div'); document.body.appendChild(box); box.innerHTML = DD.skillOrder.slot('Ahri', 'MIDDLE', { kind: 'length' });
+            DD.lolalyticsPeriod = real;
+            for (let i = 0; i < 50 && !box.querySelector('.sk-lb'); i++) await new Promise(r => setTimeout(r, 50));
+            const out = { first: (box.querySelector('.sk-lb') || {}).title, text: box.textContent }; box.remove(); return out; })()`);
+        const g0 = skills.length[0];
+        R.ok('game length: several patches are pooled (games added up, win rate kept), a missing patch is named',
+            pooled.first && pooled.first.includes(`${g0.wr.toFixed(1)}% in ${(g0.games * 2).toLocaleString('en-US')} games`) && /Platinum\+, Last 3 patches · 16\.17 not available/.test(pooled.text), pooled);
+        await h.ev(`DDHub.setTab('overview'); 1`);
+        await h.ev(`(() => { const s = document.getElementById('time-period-select'); s.value = '30'; s.dispatchEvent(new Event('change')); return 1; })()`);
+        R.ok('game length: switching to Last 30 Days re-reads it for that window', await h.waitFor(`/Last 30 Days/.test((document.querySelector('#champion-root .sk-len:not(.sk-muted)') || {}).textContent || '') && /Last 30 Days/.test(document.querySelector('#champion-root .ch-card.ch-wide').textContent)`, 15000),
+            await h.ev(`(document.querySelector('#champion-root .ch-card.ch-wide') || {}).textContent`));
+        R.ok('... with patch=30', skillCalls.some(a => a.patch === '30' && a.tier === 'platinum_plus'), skillCalls.slice(-2));
         R.ok('no uncaught errors', !h.logs.some(l => /Uncaught|TypeError|ReferenceError/.test(l)), h.logs.slice(-5));
     } catch (e) { R.ok('exception', false, e.stack); }
     R.finish();

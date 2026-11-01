@@ -1,6 +1,8 @@
 // Goals: on your own profile's Insights, CS / min, deaths / 10 and vision / min for your main role, today,
 // last 7 days and the season, from the saved games (Summoner's Rift only), against a target you can type (saved in settings.goals).
 const H = require('../lib/renderer-harness');
+const { APP } = require('../lib/common');
+const C = require(APP + 'profile-compact'), INS = require(APP + 'profile-insights');
 const R = H.results();
 const PU = 'P'.padEnd(78, 'x');
 const DAY = 864e5, now = Date.now();
@@ -12,6 +14,9 @@ const rows = [
     ...Array.from({ length: 6 }, (_, i) => row(200 + i, { pos: 'TOP', end: now - 50 * DAY })),
     ...Array.from({ length: 3 }, (_, i) => row(300 + i, { q: 1700, pos: '', cs: 0, end: now - 3600e3 }))
 ];
+// Insights proper (so the cards under the Goals render): two Mid games from the match builder
+const raw = require('../lib/raw-match')(PU, now);
+const insightsData = INS.insights([C.compactMatch(raw('EUW1_9001', { queueId: 420, ageH: 5 })), C.compactMatch(raw('EUW1_9002', { queueId: 420, ageH: 3, win: false }))], PU);
 
 (async () => {
     try {
@@ -20,13 +25,15 @@ const rows = [
             'profile:lookup': (e, a) => ({ ok: true, profile: { puuid: PU, gameName: a.gameName, tagLine: a.tagLine, platform: 'EUW1', isOwner: true, summonerLevel: 100, profileIconId: 29, ranked: [], mastery: [] } }),
             'profile:matches': (e, a) => ({ ok: true, puuid: a.puuid, group: a.group, start: 0, nextStart: 0, hasMore: false, matches: [] }),
             'profile:ledger': () => ({ ok: true, rows, total: rows.length }),
-            'profile:insights': (e, a) => ({ ok: true, n: 0, scanned: 0, group: a.group })
+            'profile:insights': (e, a) => ({ ok: true, ...insightsData, scanned: 2, group: a.group })
         } });
         await h.waitFor(`document.querySelectorAll('.champion-tile').length > 50`, 30000);
         await h.ev(`DD.showView('profile'); 1`);
         await h.waitFor(`!!DDProfile.state.profile && !!DDProfile.state.ledger`, 10000);
         await h.ev(`DDProfile.showTab('insights'); 1`);
         R.ok('the Goals card shows on your own profile', await h.waitFor(`!!document.querySelector('#profile-root .pf-goals')`, 5000));
+        const len = await h.ev(`(() => { const c = [...document.querySelectorAll('#profile-root .pf-card')].find(c => /By game length/.test(c.textContent)); const tr = c && [...c.querySelectorAll('tbody tr')].find(tr => tr.children[0].textContent === '20-25'); return tr ? { range: tr.children[4].textContent, green: !!tr.querySelector('.pf-ci-bar.pos') } : null; })()`);
+        R.ok('game length: 18-0 at 20-25 min shows its 95% range (82–100%), green as it is all above 50%', len && len.range === '82–100%' && len.green, len);
         const read = () => h.ev(`[...document.querySelectorAll('#profile-root .pf-goals tbody tr')].map(tr => [...tr.children].map(td => { const i = td.querySelector('input'); return i ? 'goal:' + i.value : td.textContent.trim() + (td.className ? '|' + td.className : ''); }))`);
         let t = await read();
         const head = await h.ev(`document.querySelector('#profile-root .pf-goals').textContent`);

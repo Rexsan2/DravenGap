@@ -36,11 +36,14 @@
             <div class="ch-head" id="ch-head"></div>
             <div class="ch-tabs" id="ch-tabs" role="tablist"></div>
             <div class="ch-body" id="ch-body"></div></div>`;
+        // the only champion the text can mean opens as you type ("qi" = Qiyana); an exact name that starts others ("Vi": Viego,
+        // Viktor) opens from the dropdown or on Enter. Deleting never opens anything.
+        const pick = (el, typing) => { const c = DD.uniqueChampion && DD.uniqueChampion(el.value, undefined, { typing }); if (c) { el.value = ''; open(c.id, null); } };
         root.querySelector('#ch-search').addEventListener('input', e => {
-            const v = e.target.value.trim().toLowerCase();
-            const c = (DD.getChampions() || []).find(x => x.name.toLowerCase() === v || x.id.toLowerCase() === v);
-            if (c) { e.target.value = ''; open(c.id, null); }
+            if (/^delete/.test(e.inputType || '')) return;
+            pick(e.target, /^insert/.test(e.inputType || '') && e.inputType !== 'insertReplacementText' && e.inputType !== 'insertFromPaste');
         });
+        root.querySelector('#ch-search').addEventListener('keydown', e => { if (e.key === 'Enter') pick(e.target, false); });
         root.addEventListener('click', onClick);
         root.addEventListener('change', onChange);
     }
@@ -129,7 +132,7 @@
                 ${y.mastery ? `<div class="ch-kv"><span>Mastery</span><b>level ${y.mastery.level} · ${Number(y.mastery.points).toLocaleString()}</b></div>` : ''}`
                 : '<div class="ch-muted">Your stats load from the League client (or Settings &gt; Refresh my stats).</div>'}
                 <button class="link-btn" data-tab="mine">Your games on ${esc(nameOf(S.champ))} ›</button></div>
-            ${DD.skillOrder ? `<div class="ch-card ch-wide"><div class="ch-card-h">Win rate by game length <span class="ch-muted">${ROLE_LABEL[S.role]}, Emerald+</span></div>${DD.skillOrder.slot(S.champ, S.role, { kind: 'length' })}${DD.skillOrder.slot(S.champ, S.role)}</div>` : ''}
+            ${DD.skillOrder ? `<div class="ch-card ch-wide"><div class="ch-card-h">Win rate by game length${DD.help ? ' ' + DD.help('length-wr') : ''} <span class="ch-muted">${ROLE_LABEL[S.role]}${DD.lolalyticsPeriod ? `, ${esc(DD.lolalyticsPeriod().label)}, ${esc(DD.lolalyticsPeriod().rankLabel)}` : ''}</span></div>${DD.skillOrder.slot(S.champ, S.role, { kind: 'length' })}${DD.skillOrder.slot(S.champ, S.role)}</div>` : ''}
         </div>`;
         return h;
     }

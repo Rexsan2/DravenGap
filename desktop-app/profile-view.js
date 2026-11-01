@@ -539,7 +539,7 @@
         paintInsights();
     }
     // Win rate by game length, this player: the season's saved games of the Insights queue (and champion),
-    // in LoLalytics' buckets. Few games per bucket: the W-L is shown and nothing is concluded under 10 games.
+    // in LoLalytics' buckets. Few games per bucket: the W-L and the 95% range (Wilson) are shown, nothing is concluded under 10 games.
     const LEN_BUCKETS = [['<15', 0, 15], ['15-20', 15, 20], ['20-25', 20, 25], ['25-30', 25, 30], ['30-35', 30, 35], ['35-40', 35, 40], ['40+', 40, 1e9]];
     function lengthCard() {
         const since = (S.ledger && S.ledger.seasonStart) || 0;
@@ -547,10 +547,16 @@
         if (rows.length < 10) return '';
         const b = LEN_BUCKETS.map(([label, lo, hi]) => { const g = rows.filter(r => r.dur / 60 >= lo && r.dur / 60 < hi); return { label, n: g.length, w: g.filter(r => r.w).length }; });
         const max = Math.max(...b.map(x => x.n), 1);
-        return `<div class="pf-card"><div class="pf-card-h"><span>By game length</span><span class="pf-muted">${rows.length} games · minutes</span></div>
-            <table class="pf-ctable"><thead><tr><th class="l">Length</th><th>Games</th><th>W-L</th><th>WR</th></tr></thead><tbody>
-            ${b.map(x => `<tr><td class="l">${x.label}<span class="pf-lenbar" style="width:${Math.round(x.n / max * 60)}px"></span></td><td>${x.n}</td><td>${x.n ? `${x.w}-${x.n - x.w}` : '–'}</td><td class="${x.n >= 10 ? wrCls(x.w / x.n) : 'pf-muted'}">${x.n ? fmtPct(x.w / x.n) : '–'}</td></tr>`).join('')}</tbody></table>
-            <div class="pf-muted pf-foot">Grey: under 10 games, too few to read anything into.</div></div>`;
+        const wilson = (w, n) => { const p = w / n, z = 1.96, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; };
+        const range = x => {
+            if (!x.n) return '–';
+            const [lo, hi] = wilson(x.w, x.n), cls = lo > 0.5 ? ' pos' : hi < 0.5 ? ' neg' : '';
+            return `<span class="pf-ci" title="95% range: your true win rate at this length is likely between ${fmtPct(lo)} and ${fmtPct(hi)}"><span class="pf-ci-bar${cls}" style="left:${(lo * 100).toFixed(1)}%;width:${Math.max(1, (hi - lo) * 100).toFixed(1)}%"></span></span>${Math.round(lo * 100)}–${fmtPct(hi)}`;
+        };
+        return `<div class="pf-card"><div class="pf-card-h"><span>By game length ${help('length-wr')}</span><span class="pf-muted">${rows.length} games · minutes</span></div>
+            <table class="pf-ctable"><thead><tr><th class="l">Length</th><th>Games</th><th>W-L</th><th>WR</th><th class="l">95% range</th></tr></thead><tbody>
+            ${b.map(x => `<tr><td class="l">${x.label}<span class="pf-lenbar" style="width:${Math.round(x.n / max * 60)}px"></span></td><td>${x.n}</td><td>${x.n ? `${x.w}-${x.n - x.w}` : '–'}</td><td class="${x.n >= 10 ? wrCls(x.w / x.n) : 'pf-muted'}">${x.n ? fmtPct(x.w / x.n) : '–'}</td><td class="l pf-muted pf-nowrap">${range(x)}</td></tr>`).join('')}</tbody></table>
+            <div class="pf-muted pf-foot">Grey: under 10 games, too few to read anything into. 95% range: where your true win rate at that length most likely is (the tick is 50%). Green or red only when the whole range is above or below 50%.</div></div>`;
     }
     function curveCard(C) {
         if (!C || !C.some(b => b.n)) return '';
@@ -1551,6 +1557,12 @@
         if (t.id === 'pf-cfilter') { const c = champByName(t.value); if (c) setChampFilter(c); else if (t.value.trim()) t.select(); }
     });
     root.addEventListener('keydown', e => { if (e.target.id === 'pf-cfilter' && e.key === 'Enter') { const c = champByName(e.target.value); if (c) setChampFilter(c); } });
+    // typing in the champion filter: the only champion the text can mean ("qi" = Qiyana) is applied at once (not while deleting)
+    root.addEventListener('input', e => {
+        if (e.target.id !== 'pf-cfilter' || /^delete/.test(e.inputType || '') || !window.DD.uniqueChampion) return;
+        const one = window.DD.uniqueChampion(e.target.value, undefined, { typing: /^insert/.test(e.inputType || '') && e.inputType !== 'insertReplacementText' && e.inputType !== 'insertFromPaste' });
+        if (one) setChampFilter(Number(one.key));
+    });
 
     // ---------- champion filter: the match list, Insights and the champion table follow it ----------
     function champOptions() { return [...(window.DD.getChampions() || [])].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(c => `<option value="${esc(c.name)}"></option>`).join(''); }

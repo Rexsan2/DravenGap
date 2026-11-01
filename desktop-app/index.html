@@ -358,7 +358,8 @@
         .sk-len { margin: 4px 0 8px; font-size: 0.85rem; }
         .sk-lbars { display: flex; gap: 8px; align-items: flex-end; height: 96px; margin-bottom: 4px; }
         .sk-lb { flex: 1; max-width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; font-size: 0.72rem; color: var(--text-secondary); }
-        .sk-lb i { width: 70%; border-radius: 3px 3px 0 0; background: var(--red-neg); opacity: .8; }
+        .sk-lb i { position: relative; width: 70%; border-radius: 3px 3px 0 0; background: var(--red-neg); opacity: .8; }
+        .sk-lb i .sk-ci { position: absolute; left: 50%; width: 2px; margin-left: -1px; background: var(--text-primary); opacity: .75; border-radius: 1px; }
         .sk-lb i.w { background: var(--accent-color); }
         .sk-lb span { color: var(--text-primary); font-variant-numeric: tabular-nums; }
         .sk-lb.few { opacity: .45; }
@@ -580,9 +581,10 @@
                 <summary>Champion pages</summary>
                 <ul>
                     <li>One page per champion: <strong>Champions</strong> in the sidebar, Ctrl+K, a right-click on a champion in the draft grid, the link in a <strong>why</strong> panel, or <strong>Champion page</strong> in Builds.</li>
+                    <li>The champion boxes (champion page, Builds, the Profile filter) finish your typing: as soon as only one champion fits, it opens (<strong>qi</strong> → Qiyana, <strong>fate</strong> → Twisted Fate, <strong>kaisa</strong> → Kai'Sa). A name that starts others, like <strong>Vi</strong> (Viego, Viktor), opens with Enter or from the list.</li>
                     <li>Tabs: <strong>Overview</strong> (base WR per role, best and worst matchups, best allies, you), <strong>Matchups</strong> (every lane opponent with the adjusted Δ, PP and your Exp WR against it), <strong>Synergies</strong> (best partners per role), <strong>Builds</strong> (the saved Coachless set and your build check), <strong>My stats</strong> (your games on it from Profile) and <strong>ARAM Mayhem</strong>.</li>
                     <li>The numbers are the draft's own (same dataset and model as the recommendations). Click an opponent or partner to open its page.</li>
-                    <li><strong>Win rate by game length</strong> (Overview): the champion's win rate in games under 15, 15-20 … 40+ minutes in that role (LoLalytics, Emerald+), and whether it does better in short or long games. The same page shows the skill order.</li>
+                    <li><strong>Win rate by game length</strong> (Overview): the champion's win rate in games under 15, 15-20 … 40+ minutes in that role, from LoLalytics for your <strong>Time Period</strong> and <strong>Rank</strong> (periods of several patches add up each patch's games), with each bar's 95% range, and whether it does better in short or long games. The same page shows the skill order (LoLalytics' current patch, Emerald+).</li>
                 </ul>
             </details>
 
@@ -6597,14 +6599,23 @@
                 if (!buildsState.role && buildsCtx && buildsCtx.index) buildsState.role = bvDefaultRole(id, buildsCtx.index[id]);
                 if (window.DD.currentView() === 'builds') renderBuilds(); else window.DD.showView('builds');
             };
-            buildsChampInput.addEventListener('input', () => {
+            buildsChampInput.addEventListener('input', e => {
                 if (!buildsCtx) return;
-                const v = buildsChampInput.value.trim().toLowerCase();
-                const hit = Object.keys(buildsCtx.index).find(id => bvChampName(id).toLowerCase() === v);
+                // the one champion (with builds) the text can mean: "qi" completes to Qiyana; not while deleting
+                // typed letters complete only a champion nothing else fits; the dropdown (or pasting) takes an exact name too
+                const typing = /^insert/.test(e.inputType || '') && e.inputType !== 'insertReplacementText' && e.inputType !== 'insertFromPaste';
+                const one = /^delete/.test(e.inputType || '') ? null : window.DD.uniqueChampion(buildsChampInput.value, Object.keys(buildsCtx.index).map(id => ({ id, name: bvChampName(id) })), { typing });
+                const hit = one && one.id;
+                if (one && buildsChampInput.value !== one.name) buildsChampInput.value = one.name;
                 // a new champion opens on its own main role (saved games, else how it's usually played); the role buttons switch it
                 if (hit && hit !== buildsState.champion) buildsSelectChampion(hit, null);
             });
-            buildsChampInput.addEventListener('change', () => { buildsChampInput.blur(); if (buildsCtx) buildsPaint(); });
+            buildsChampInput.addEventListener('change', () => {
+                // Enter / leaving the box: an exact name ("Vi") counts now
+                const one = buildsCtx && window.DD.uniqueChampion(buildsChampInput.value, Object.keys(buildsCtx.index).map(id => ({ id, name: bvChampName(id) })));
+                if (one && one.id !== buildsState.champion) { buildsChampInput.value = one.name; buildsSelectChampion(one.id, null); }
+                buildsChampInput.blur(); if (buildsCtx) buildsPaint();
+            });
             for (const t of [buildsLowPickToggle, buildsLowOccToggle]) t.addEventListener('change', () => { saveCurrentSettings(); buildsPaint(); });
             // Preload (Riot Data Dragon): item, rune and summoner spell names, then their icons, so the Builds tab renders instantly.
             // Champion names and icons are already loaded at start-up (champion.json + the champion grid).
@@ -7589,6 +7600,26 @@
                 const tp = timePeriodSelect.value || 'patch';
                 const list = dayPeriodDays(tp) ? dayPeriodPatches(tp) : periodPatches(tp, rankSelect.value);
                 return { patches: list && list.length ? list.slice() : (currentPatchLabel() ? [currentPatchLabel()] : []), label: tp === 'patch' ? `Patch ${currentPatchLabel()}` : periodLabel(tp) };
+            };
+            // the selected Time Period / Rank as LoLalytics pages, for views that read LoLalytics directly (win rate by game length):
+            // day windows are LoLalytics' own ('7', '14', '30'); every other period is its patches, one page each, to be pooled
+            window.DD.lolalyticsPeriod = () => {
+                const tp = timePeriodSelect.value || 'patch', rank = rankSelect.value || 'emerald_plus', days = dayPeriodDays(tp);
+                const { patches, label } = window.DD.periodPatches();
+                return { pages: days ? [String(days)] : patches.length ? patches : [''], label: days ? periodLabel(tp) : label, pooled: !days && patches.length > 1,
+                         adaptive: tp === ADAPTIVE_PERIOD, rank, rankLabel: RANKS[rank] || rank };
+            };
+            // The one champion a search text can mean, else null: an exact name / id, or the only champion whose name (or one word of it,
+            // "fate" = Twisted Fate) or id starts with it. Case, spaces and punctuation are ignored ("kaisa" = Kai'Sa); 2+ characters.
+            // list: objects with id and name (default: every champion). Used by the champion boxes to complete "qi" to Qiyana.
+            // typing: while letters are being typed an exact name does not win, so "vi" waits (Vi, Viego, Viktor) and "vie" is Viego;
+            // Enter or the dropdown takes the exact name.
+            window.DD.uniqueChampion = (text, list = allChampions, { typing = false } = {}) => {
+                const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const q = norm(text); if (q.length < 2 || !list || !list.length) return null;
+                const exact = list.find(c => norm(c.name) === q || norm(c.id) === q); if (exact && !typing) return exact;
+                const hits = list.filter(c => norm(c.name).startsWith(q) || norm(c.id).startsWith(q) || String(c.name).toLowerCase().split(/[^a-z0-9]+/).some(w => w && w.startsWith(q)));
+                return hits.length === 1 ? hits[0] : null;
             };
             // the matchup page: champion page of `champ` in `role`, on its "vs" tab against `vs`
             window.DD.openMatchup = (champ, role, vs) => { if (window.DDHub) window.DDHub.open(champ, role, { vs }); };
