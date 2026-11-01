@@ -16,8 +16,10 @@
     const api = window.electronAPI && window.electronAPI.feature;
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable); };
-    const modalOpen = () => [...document.querySelectorAll('#how-to-use-modal, #storage-modal, #range-modal, #settings-modal, #glossary-modal')].some(m => m.style.display && m.style.display !== 'none');
+    // typing in a text box turns the shortcuts off; a focused checkbox, radio, slider or button (kept after a click) is not typing
+    const NOT_TEXT = /^(checkbox|radio|range|button|submit|reset|image|color|file)$/i;
+    const typing = () => { const a = document.activeElement; return !!a && ((a.tagName === 'INPUT' && !NOT_TEXT.test(a.type)) || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable); };
+    const modalOpen = () => [...document.querySelectorAll('#how-to-use-modal, #storage-modal, #range-modal, #settings-modal, #glossary-modal, #patch-day-modal')].some(m => m.style.display && m.style.display !== 'none');
 
     // ---------------------------------------------------------------- champion portraits -> champion page
     const PORTRAIT_VIEWS = new Set(['champion', 'premades', 'tierlist', 'scout']);
@@ -29,7 +31,7 @@
         const m = /\/img\/champion\/([^/.?]+)\.png/.exec(img.getAttribute('src') || '');
         if (!m) return;
         const view = document.body.dataset.view;
-        const inFlow = img.closest('#flow-bar, .pd-card'), inDuo = img.closest('#duo-view');
+        const inFlow = img.closest('#flow-bar'), inDuo = img.closest('#duo-view');   // (the patch-day card handles its own: it closes, then opens the page)
         if (!inFlow && !inDuo && !PORTRAIT_VIEWS.has(view)) return;          // views with their own click meaning
         if (img.closest('.ch-head, #ch-head')) return;                       // the page's own header picture
         const id = decodeURIComponent(m[1]);
@@ -44,6 +46,12 @@
     st.textContent = `body[data-view="champion"] img[src*="/img/champion/"]:not(.ch-img), body[data-view="premades"] img[src*="/img/champion/"], body[data-view="tierlist"] img[src*="/img/champion/"],
         body[data-view="scout"] img[src*="/img/champion/"], #duo-view img[src*="/img/champion/"], #flow-bar img[src*="/img/champion/"] { cursor: pointer; }`;
     document.head.appendChild(st);
+
+    // ---------------------------------------------------------------- a file dropped on the window does nothing
+    // (Chromium would open the file in place of the app; main.js's will-navigate guard blocks that as well). Text dragged into a box still works.
+    const hasFiles = e => !!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'));
+    document.addEventListener('dragover', e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; } });
+    document.addEventListener('drop', e => { if (hasFiles(e)) e.preventDefault(); });
 
     // ---------------------------------------------------------------- toasts
     const host = document.createElement('div');
@@ -110,12 +118,19 @@
         if (window.DDProfile && window.DDProfile.openFromOutside) window.DDProfile.openFromOutside(acct, tab);
         else DD.showView('profile');
     }
+    // The region for a Riot ID typed without one (this palette, Multi-search, Settings > Account): your account's region, from the
+    // client (profile:owner, which falls back to the last client account seen; then profile:me), else Settings > Default account, else EUW1.
     async function defaultPlatform() {
-        try { const s = await window.electronAPI.getSettings(); return (s && s.profileAccount && s.profileAccount.platform) || 'EUW1'; } catch (e) { return 'EUW1'; }
+        const ask = async (ch, pick) => { try { const r = api && await api.invoke(ch); return (r && r.ok && pick(r)) || null; } catch (e) { return null; } };
+        const saved = async () => { try { const s = await window.electronAPI.getSettings(); return (s && s.profileAccount && s.profileAccount.platform) || null; } catch (e) { return null; } };
+        const own = window.DDProfile && window.DDProfile.state && window.DDProfile.state.owner;
+        return (await ask('profile:owner', r => r.owner && r.owner.platform)) || (await ask('profile:me', r => r.me && r.me.platform))
+            || (own && own.platform) || (await saved()) || 'EUW1';
     }
+    DD.defaultPlatform = defaultPlatform;
     function build(q) {
         const out = [], nq = norm(q);
-        const riot = q.match(/^\s*(.{2,16})#([A-Za-z0-9]{2,5})\s*$/);
+        const riot = q.match(/^\s*(.{2,16})#([\p{L}\p{N}]{2,5})\s*$/u);   // taglines can use any letters (Korean, Japanese, ...)
         if (riot) out.push({ label: `Open profile ${riot[1]}#${riot[2]}`, hint: 'Riot ID', run: async () => profile({ gameName: riot[1].trim(), tagLine: riot[2], platform: await defaultPlatform() }, 'summary') });
         const rec = (window.DDProfile && window.DDProfile.state && window.DDProfile.state.recent) || [];
         for (const a of rec) if (!nq || norm(a.gameName + a.tagLine).includes(nq)) out.push({ label: `${a.gameName}#${a.tagLine}`, hint: `profile · ${a.platform}`, run: () => profile(a, 'summary') });
@@ -209,8 +224,9 @@
         } else if (ACTIVE.has(ev.next) && !ACTIVE.has(ev.prev)) {
             if (mode) { if (DD.currentView() !== mode) DD.showView(mode); }
             else { profile(null, 'live'); toast('Game started: showing the live game.'); }
-        } else if ((ev.next === 'EndOfGame' || ev.next === 'PreEndOfGame') && ACTIVE.has(ev.prev)) {
-            profile(null, 'summary');
+        } else if (['WaitingForStats', 'PreEndOfGame', 'EndOfGame'].includes(ev.next) && ACTIVE.has(ev.prev)) {
+            // the game's one step out of an active phase (usually into WaitingForStats): YOUR profile, whoever's was on screen
+            if (window.DDProfile && window.DDProfile.openOwner) window.DDProfile.openOwner('summary'); else profile(null, 'summary');
             toast('Game over: your match appears in Profile once Riot publishes it (usually within a minute).', { ms: 8000 });
         }
     }
@@ -218,12 +234,13 @@
     DD.followGame = { onPhase, isOn: () => follow };   // for tests
 
     // ---- "Copy as image" (REC 2.11 / FEEDBACK B11): the element as a PNG on the clipboard, for Discord. It is scrolled into view
-    // first (only what is on screen can be captured) and cut to the window; the button that asked is hidden while capturing.
+    // first (only what is on screen can be captured) and cut to the window; the button that asked and the toasts (a previous
+    // "Copied…" can sit over the card) are hidden while capturing.
     DD.copyAsImage = async (el, what = 'it') => {
         const api = window.electronAPI;
         if (!el || !api || !api.copyRegion) return { ok: false };
         el.scrollIntoView({ block: 'nearest' });
-        const hide = [...el.querySelectorAll('[data-copy-hide]')];
+        const hide = [...el.querySelectorAll('[data-copy-hide]'), host];
         hide.forEach(b => { b.style.visibility = 'hidden'; });
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const b = el.getBoundingClientRect();

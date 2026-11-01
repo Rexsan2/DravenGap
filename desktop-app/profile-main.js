@@ -2,16 +2,19 @@
 // Main-process side of the Profile view (op.gg-style summoner profiles + live game). Registers 'profile:*' IPC channels.
 //
 //   profile:test-key  ()                                  -> { ok, ... } | { ok:false, code, error }
-//   profile:me        ()                                  -> { ok, me: {gameName,tagLine,platform,...}|null, lcu:boolean, phase }
+//   profile:me        ()                                  -> { ok, me: {gameName,tagLine,platform,...}|null, lcu:boolean, phase, queueId }
 //   profile:owner     ({fallback?:{gameName,tagLine,platform}}) -> { ok:true, owner:{gameName,tagLine,platform,puuid|null}, source:'client'|'last'|'settings' } | { ok:false }
 //                     "which account is mine": the client's account when it has a platform, else the last client account seen
 //                     (cache meta 'owner-last'), else settings.profileAccount (settings.json, else the renderer's `fallback`). No requests.
 //   profile:static    ()                                  -> { ok, queues:{id:name}, groups, mayhemQueue, seasonStart }
-//   profile:lookup    ({gameName,tagLine,platform,force}) -> { ok, profile, stale }   (cache first; push profile:update when refreshed)
+//   profile:lookup    ({gameName,tagLine,platform,force}) -> { ok, profile, stale, partial? }   (cache first; push profile:update when refreshed)
+//                     partial: { league|summoner|mastery: {ok:false,code,error} } for a part that failed while the others loaded
+//                     (profile.ranked is then [] because the rank is unknown, not because the player is unranked)
 //   profile:matches   ({puuid,platform,group,start,refresh,champId?}) -> { ok, matches[], nextStart, hasMore, stale }
 //                     champId: only that champion's games (Riot's list has no champion filter: up to 4 pages are read per call)
 //                     games recorded from the client (ARAM Mayhem, not in Riot's API; match.src 'lcu') are merged in by time
 //                     group 'all' fetches every id from Riot but leaves Arena and the other non-5v5 modes out of the rows; group 'arena' lists them
+//                     group 'mayhem' (clientOnly) is the client-recorded games only: no Riot request
 //   profile:match     ({id,platform})                     -> { ok, match }
 //   profile:timeline  ({id,platform,minVersion?})       -> { ok, timeline:{id,players:{pid:{items:[{m,items:[{i,s?}]}],skills:{seq,prio}}},gold:[{m,d}]}, cached }  (1 request, only when a match's Build/Analysis tab opens; compacted + cached forever)
 //   profile:played    ({puuid,platform,group})           -> { ok, list:[{name,tag,puuid,games,w,l,wr}], scanned }  (teammates in >=2 cached games; no requests)
@@ -19,8 +22,9 @@
 //   profile:lp-history ()                                 -> { ok, list:[{at,q,win,before,after,delta,dodge?}], current }   (your LP per ranked game, read from the client)
 //   profile:session   ()                                  -> { ok, lcu, games today [{q,champId,win,k,d,a,at,dur}], w, l, lp:{queueType:delta} }   (client match history; no Riot requests)
 //   profile:duo       ()                                  -> { ok, lcu, inLobby, partners:[{gameName,tagLine,positions,assigned,championId}], me:{...,positions,assigned} }  (client lobby; no Riot requests)
-//   profile:duo-history ({owner, partner:{gameName,tagLine}}) -> { ok, games, w, pairs:[{mine,theirs,games,w,myPos,theirPos}], lanes[], partnerChamps:{POS:{champId:n}} }  (cached games only)
-//   profile:group-history ({owner, partners:[{gameName,tagLine}] (1-4), patches}) -> games with ALL of them on your team:
+//   profile:duo-history ({owner, partner:{gameName,tagLine,puuid?}}) -> { ok, games, w, pairs:[{mine,theirs,games,w,myPos,theirPos}], lanes[], partnerChamps:{POS:{champId:n}} }  (cached games only)
+//                         a teammate is the partner by puuid (games before a Riot ID change) or by name#tag
+//   profile:group-history ({owner, partners:[{gameName,tagLine,puuid?}] (1-4), patches}) -> games with ALL of them on your team:
 //                         { ok, scanned, games, w, combos:[{champs:[you, ...partners], pos:[...], games, w}], lineups:[{pos:[...], games, w}] }  (cached games only)
 //   profile:champ-summary ({champId, puuid | gameName,tagLine,platform}) -> { ok, puuid, games, w, k, d, a, cs, mins, kp, roles, queues,
 //                     last[10], score, mvp, ace, items:{POS:{games, freq:{itemId:n}}}, itemGames, curve, vsOpp:{champId:{g,w}} }   (cached games only; items and lane opponents of the newest 60)
@@ -31,13 +35,14 @@
 //                     { upgrade:{game} } when spectator-v5 knows a game that was first seen from the client only, { finished, budget }
 //                     (champs: [[championId, name, ddragonId], ...] lets the main process match op.gg's champion names)
 //   profile:scout     ({puuid,platform,championId,gameKey?,idx?}) -> { ok, form }  (last 5 games of one live player; ~6 requests)
-//   profile:multi     ({gameName,tagLine,platform})     -> { ok, profile, form, tags }  (multi-search: one player of a pasted lobby; ~10 requests when not cached)
+//   profile:multi     ({gameName,tagLine,platform})     -> { ok, profile, form, tags, partial? }  (multi-search: one player of a pasted lobby; ~10 requests when not cached)
 //   profile:refresh   ()                                  -> owner's new matches now
 //   profile:seasons   ({gameName,tagLine,platform,puuid?,force?}) -> { ok, seasons[{season,queue,tier,rank,lp,source,peak}], peak, recorded[], opgg:{ok,cached,error?,retryAt?}, fetchedAt }
 //   profile:emblems   ({tiers:[...], size:'mini'|'big'})  -> { ok, emblems:{TIER:dataUrl} }   (tier whitelist; disk cached)
 //   profile:diag      ()                                  -> { ok, riot:{keySet,windows[{limit,ms,used}],pausedUntil,waiting,requests,rateLimited}, opgg:{blockedUntil,...}, lcu:{up,phase} }
-//   profile:cache-clear ({what:'lookups'|'opgg-backoff'}) -> { ok, removed }   (Settings > Diagnostics; downloaded matches are kept)
-// Pushes (sendToWindow): profile:update {kind:'profile'|'matches', ...}, profile:live {active, phase, ...}, profile:progress.
+//   profile:cache-clear ({what:'lookups'|'opgg-backoff'}) -> { ok, removed }   (Settings > Diagnostics; downloaded matches and the LP history are kept)
+// Pushes (sendToWindow): profile:update {kind:'profile'|'matches', ...} ({kind:'key-rejected', owner:true} once per key when the
+// post-game refresh finds the key rejected), profile:live {active, phase, ...}, profile:progress.
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -59,6 +64,8 @@ function deps_stepMs() { return Number(process.env.DD_BACKFILL_STEP_MS) || 4 * 6
 const TTL = { account: 24 * 3600e3, summoner: 10 * 60e3, league: 2 * 60e3, mastery: 10 * 60e3, ids: 90e3, queues: 7 * 24 * 3600e3 };
 const PUUID_RE = /^[A-Za-z0-9_-]{20,100}$/;
 const MATCH_RE = /^[A-Z0-9]+_\d+$/;
+const LCU_PUUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;   // the League client's own puuid (a UUID); API puuids never look like this
+const LCU_LIST_MAX = 600;   // games recorded from the client kept per player (`lcu` list)
 
 const pool = async (items, n, fn) => {
     let i = 0;
@@ -77,7 +84,7 @@ function register(deps) {
     const cache = createCache(path.join(userDataPath, 'profile-cache'));
     activeCache = cache;
     const riot = createRiotClient({ getKey: getRiotApiKey, baseUrl: deps.riotBaseUrl, limiter: deps.limiter });
-    const lcu = getSharedLcu({ getLeagueCredentials: deps.getLeagueCredentials, lcuRequest: deps.lcuRequest });
+    const lcu = getSharedLcu({ getLeagueCredentials: deps.getLeagueCredentials, lcuRequest: deps.lcuRequest, credTimeoutMs: deps.credTimeoutMs });
     const push = (ch, payload) => { try { sendToWindow(ch, payload); } catch (e) { /* window gone */ } };
     const log = deps.log || (() => {});
 
@@ -100,21 +107,59 @@ function register(deps) {
         return cache.dropMeta((k, e) => k === 'sum:' + puuid || k === 'lg:' + puuid || k === 'ms:' + puuid || k.startsWith('mc:' + puuid + ':') || (k.startsWith('acct:') && e && e.data && e.data.puuid === puuid));
     }
 
-    // Re-resolve a stale puuid by its Riot ID; carries the ledger rows / id lists over to the new puuid. Returns the new puuid.
+    // One player under a new puuid (a key from another Riot project, or the client's own puuid used before a key was set):
+    // the old player doc is carried over. Ledger rows (the new doc wins), the id lists the new doc lacks, the games recorded
+    // from the client (`lcu`: Riot never returns them), the recorded season ranks (`snaps`) and the client-import time.
+    // The old Riot ID entry is marked `movedTo` (knownPuuid skips it, so this runs once) and 'owner-last' follows the move.
+    function adoptPlayer(oldPuuid, newPuuid) {
+        if (!oldPuuid || !newPuuid || oldPuuid === newPuuid) return false;
+        const od = cache.peekPlayer(oldPuuid);
+        if (od) {
+            const nd = cache.player(newPuuid);
+            nd.rows = { ...(od.rows || {}), ...nd.rows };
+            for (const g of Object.keys(od.idx || {})) if (!nd.idx[g]) nd.idx[g] = od.idx[g];
+            if (od.lcu && od.lcu.length) {
+                const end = id => (nd.rows[id] && nd.rows[id].end) || 0;
+                nd.lcu = [...new Set([...(nd.lcu || []), ...od.lcu])].sort((x, y) => end(y) - end(x)).slice(0, LCU_LIST_MAX);
+            }
+            if (od.snaps && od.snaps.length) {   // one per queue per day; the new doc's snapshot wins a clash
+                const byKey = new Map();
+                for (const s of [...od.snaps, ...(nd.snaps || [])]) if (s) byKey.set(s.q + '|' + s.d, s);
+                nd.snaps = [...byKey.values()].sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : 0)).slice(-600);
+            }
+            if (od.lcuHistAt && !(nd.lcuHistAt >= od.lcuHistAt)) nd.lcuHistAt = od.lcuHistAt;
+            cache.savePlayer(newPuuid);
+        }
+        const h = cache.getMeta('puuid:' + oldPuuid);
+        if (h && h.data && h.data.movedTo !== newPuuid) cache.setMeta('puuid:' + oldPuuid, { ...h.data, movedTo: newPuuid });
+        const last = cache.getMeta('owner-last');
+        if (last && last.data && last.data.puuid === oldPuuid) cache.setMeta('owner-last', { ...last.data, puuid: newPuuid });
+        playedMemo.clear(); insightsMemo.clear();
+        return !!od;
+    }
+    // A fresh account lookup answered `a.puuid`, but this Riot ID was seen before under another puuid. Carry that player over
+    // when the old id is the client's own puuid (games read from the client without a key) or Riot can't decrypt it any more
+    // (a key from another project). A Riot ID that now belongs to another account (Riot answers the old id) is left alone.
+    async function adoptPrevious(a, platform, priority) {
+        for (const old of knownPuuids(a.gameName, a.tagLine, platform, a.puuid).slice(0, 3)) {
+            const h = cache.getMeta('puuid:' + old);
+            if (h && h.data && (h.data.lcu || LCU_PUUID_RE.test(old))) { adoptPlayer(old, a.puuid); continue; }
+            const last = cache.getMeta('owner-last');
+            if (!cache.peekPlayer(old) && !(last && last.data && last.data.puuid === old)) continue;   // nothing to carry over
+            try {
+                const other = await accountGet(platform, `/riot/account/v1/accounts/by-puuid/${encodeURIComponent(old)}`, { priority, nullOn404: true });
+                if (other && other.gameName) cache.setMeta('puuid:' + old, { gameName: other.gameName, tagLine: other.tagLine, platform });   // another account: its own Riot ID
+            } catch (e) { if (e && e.code === 'STALE_PUUID') adoptPlayer(old, a.puuid); }
+        }
+    }
+
+    // Re-resolve a stale puuid by its Riot ID; carries the player doc over to the new puuid (adoptPlayer). Returns the new puuid.
     async function recoverPuuid(oldPuuid, platform, priority = PRIORITY.VISIBLE) {
         const id = identOf(oldPuuid);
         dropAccountCache(oldPuuid);
         if (!id || !id.gameName) throw new ProfileError('STALE_PUUID', 'This player id belongs to a different API key. Search the Riot ID again.');
-        const a = await getAccount(id.gameName, id.tagLine, id.platform || platform, { priority, force: true, noStale: true });
-        if (a.puuid !== oldPuuid) {
-            const od = cache.peekPlayer(oldPuuid);
-            if (od) {
-                const nd = cache.player(a.puuid);
-                nd.rows = { ...od.rows, ...nd.rows };
-                for (const g of Object.keys(od.idx)) if (!nd.idx[g]) nd.idx[g] = od.idx[g];
-                cache.savePlayer(a.puuid);
-            }
-        }
+        const a = await getAccount(id.gameName, id.tagLine, id.platform || platform, { priority, force: true, noStale: true, adopt: false });
+        adoptPlayer(oldPuuid, a.puuid);
         return a.puuid;
     }
     // fn(puuid); on STALE_PUUID recover once and run again with the new puuid
@@ -128,7 +173,8 @@ function register(deps) {
         }
     }
 
-    async function getAccount(gameName, tagLine, platform, { priority = PRIORITY.VISIBLE, force = false, noStale = false } = {}) {
+    // adopt: false when the caller carries a proven-stale player over itself (the stale-puuid paths)
+    async function getAccount(gameName, tagLine, platform, { priority = PRIORITY.VISIBLE, force = false, noStale = false, adopt = true } = {}) {
         const key = `acct:${platform}:${gameName.toLowerCase()}#${tagLine.toLowerCase()}`;
         const hit = cache.getMeta(key);
         if (hit && !force && Date.now() - hit.at < TTL.account) { rememberIdent(hit.data.puuid, hit.data.gameName, hit.data.tagLine, platform); return hit.data; }
@@ -136,6 +182,7 @@ function register(deps) {
             const a = await accountGet(platform, `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`, { priority, nullOn404: true });
             if (!a || !a.puuid) throw new ProfileError('NOT_FOUND', `Riot ID ${gameName}#${tagLine} was not found on ${platform}.`);
             cache.setMeta(key, a);
+            if (adopt) await adoptPrevious(a, platform, priority).catch(() => {});   // before the new Riot ID entry: the old puuid is still "known"
             cache.setMeta('puuid:' + a.puuid, { gameName: a.gameName, tagLine: a.tagLine, platform });
             rememberIdent(a.puuid, a.gameName, a.tagLine, platform);
             return a;
@@ -155,6 +202,11 @@ function register(deps) {
             let platform = null;
             const rl = await lcu.get('/riotclient/get_region_locale');
             if (rl && rl.region) platform = C.LCU_REGION_TO_PLATFORM[String(rl.region).toUpperCase()] || null;
+            if (!platform) {   // an unknown region name: the platform id of the client's own match history (main.js syncRiotHistory reads it too)
+                const pg = await lcu.get('/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=1').catch(() => null);
+                const pid = pg && String(pg.platformId || '').toUpperCase();
+                if (pid && PLATFORMS.includes(C.LCU_REGION_TO_PLATFORM[pid])) platform = C.LCU_REGION_TO_PLATFORM[pid];
+            }
             v = { gameName: s.gameName || s.displayName, tagLine: s.tagLine || '', platform, lcuPuuid: s.puuid || null, profileIconId: s.profileIconId, summonerLevel: s.summonerLevel };
             noteOwner(v);
         }
@@ -190,11 +242,13 @@ function register(deps) {
     }
     // The puuid of a Riot ID: the account lookup (cache first, then Riot); when that cannot answer (no key, offline) the Riot IDs
     // seen before ('puuid:' cache entries) do, so views that read the local cache keep working without a key or a client.
-    function knownPuuid(g, t, platform) {
-        let found = null;
+    // (entries marked `movedTo` were carried over to another puuid by adoptPlayer and are skipped)
+    function knownPuuid(g, t, platform) { return knownPuuids(g, t, platform)[0] || null; }
+    function knownPuuids(g, t, platform, except) {
+        const found = [];
         const gl = String(g).toLowerCase(), tl = String(t).toLowerCase();
         cache.dropMeta((k, e) => {   // read-only scan (the predicate never asks for removal)
-            if (!found && k.startsWith('puuid:') && e && e.data && e.data.platform === platform && String(e.data.gameName).toLowerCase() === gl && String(e.data.tagLine).toLowerCase() === tl) found = k.slice(6);
+            if (k.startsWith('puuid:') && k.slice(6) !== except && e && e.data && !e.data.movedTo && e.data.platform === platform && String(e.data.gameName).toLowerCase() === gl && String(e.data.tagLine).toLowerCase() === tl) found.push(k.slice(6));
             return false;
         });
         return found;
@@ -223,7 +277,8 @@ function register(deps) {
     const part = (name, puuid) => cache.getMeta(`${name}:${puuid}`);
     const refreshing = new Map();
 
-    async function fetchParts(acct, platform, { priority, me, force, only }) {
+    // failed: optional {} that receives the parts that could not be loaded ({ league: error }) when the others could
+    async function fetchParts(acct, platform, { priority, me, force, only, failed }) {
         const puuid = acct.puuid;
         const owner = sameId(me, acct.gameName, acct.tagLine, platform);
         const want = n => !only || only.includes(n);
@@ -245,7 +300,7 @@ function register(deps) {
         let firstErr = null, okCount = 0;
         res.forEach((r, i) => {
             if (r.status === 'fulfilled') { cache.setMeta(`${names[i] === 'summoner' ? 'sum' : names[i] === 'league' ? 'lg' : 'ms'}:${puuid}`, r.value == null ? [] : r.value); okCount++; if (names[i] === 'league') recordLeague(puuid, r.value); }
-            else if (!firstErr) firstErr = r.reason;
+            else { if (!firstErr) firstErr = r.reason; if (failed) failed[names[i]] = r.reason; }
         });
         const stale = res.find(r => r.status === 'rejected' && r.reason && r.reason.code === 'STALE_PUUID');
         if (stale) throw stale.reason;
@@ -257,13 +312,17 @@ function register(deps) {
         catch (e) {
             if (e.code !== 'STALE_PUUID') throw e;
             dropAccountCache(acct.puuid);
-            const fresh = await getAccount(acct.gameName, acct.tagLine, platform, { priority: o.priority, force: true, noStale: true });
+            const fresh = await getAccount(acct.gameName, acct.tagLine, platform, { priority: o.priority, force: true, noStale: true, adopt: false });
             if (fresh.puuid === acct.puuid) throw e;
+            adoptPlayer(acct.puuid, fresh.puuid);
+            if (o.failed) for (const k of Object.keys(o.failed)) delete o.failed[k];   // the first try's failures were the stale id
             await fetchParts(fresh, platform, { ...o, only: null });
             return fresh;
         }
     }
 
+    // the parts fetchParts could not load, for the view ({ league: { ok:false, code, error } }): "Rank unavailable", not "Unranked"
+    const partialOf = failed => { const ks = Object.keys(failed || {}); return ks.length ? Object.fromEntries(ks.map(k => [k, errorToResult(failed[k])])) : null; };
     function buildProfile(acct, platform, me) {
         const sum = part('sum', acct.puuid), lg = part('lg', acct.puuid), ms = part('ms', acct.puuid);
         const ages = [sum, lg, ms].map(x => x ? x.at : 0);
@@ -290,7 +349,9 @@ function register(deps) {
     // Without a key Riot can't be asked, but the client knows its own account: rank (ranked-stats), mastery, and your last 100 games
     // (/lol-match-history: the list, then each game with all ten players). They are stored like client-recorded games (match.src
     // 'lcu', the player's `lcu` list), so the match list, Insights, Premades and My stats read them as usual. Only your own account;
-    // other players still need a key. The player id is your API puuid when it is known from earlier, else the client's own puuid.
+    // other players still need a key. The player id is your API puuid when it is known from earlier, else the client's own puuid
+    // (its Riot ID entry is marked `lcu`: the first account lookup with a key carries that player over to the API puuid, adoptPlayer).
+    // A game already downloaded (from Riot, or recorded before) is never replaced by the client's poorer copy (no lanes, no objectives).
     const CLIENT_HISTORY_MS = 2 * 60e3;
     async function keylessOwner(gameName, tagLine, platform) {
         if (getRiotApiKey()) return null;
@@ -298,7 +359,7 @@ function register(deps) {
         if (!me || !me.lcuPuuid || !me.platform) return null;
         if (gameName != null && !sameId(me, gameName, tagLine, platform)) return null;
         const puuid = (await ownerApiPuuid(me)) || me.lcuPuuid;
-        cache.setMeta('puuid:' + puuid, { gameName: me.gameName, tagLine: me.tagLine, platform: me.platform });
+        cache.setMeta('puuid:' + puuid, { gameName: me.gameName, tagLine: me.tagLine, platform: me.platform, ...(puuid === me.lcuPuuid ? { lcu: true } : {}) });
         rememberIdent(puuid, me.gameName, me.tagLine, me.platform);
         return { me, puuid };
     }
@@ -311,6 +372,11 @@ function register(deps) {
         for (const g of games) {
             const id = `${me.platform}_${g.gameId}`;
             if (doc.rows[id] && (doc.lcu || []).includes(id)) continue;
+            if (cache.hasMatch(id)) {   // already downloaded: list it (and give it a ledger row) without touching the file
+                if (!doc.rows[id]) { const raw = await cache.getMatch(id), cm = raw && compactOf(raw); if (cm) noteRow(puuid, cm); }
+                if (doc.rows[id]) doc.lcu = [id, ...(doc.lcu || []).filter(x => x !== id)];
+                continue;
+            }
             const full = await lcu.get(`/lol-match-history/v1/games/${g.gameId}`).catch(() => null);
             if (!full || !Array.isArray(full.participants) || !full.participants.length) continue;
             const raw = C.lcuGameToMatch(full, { platform: me.platform, ownerLcuPuuid: me.lcuPuuid, ownerApiPuuid: puuid });
@@ -321,7 +387,7 @@ function register(deps) {
             doc.lcu = [cm.id, ...(doc.lcu || []).filter(x => x !== cm.id)];
             added++;
         }
-        doc.lcu = (doc.lcu || []).slice(0, 600);
+        doc.lcu = (doc.lcu || []).slice(0, LCU_LIST_MAX);
         doc.lcuHistAt = Date.now();
         cache.savePlayer(puuid);
         return added;
@@ -338,17 +404,21 @@ function register(deps) {
         const acct = { puuid, gameName: me.gameName, tagLine: me.tagLine };
         return { ok: true, profile: { ...buildProfile(acct, me.platform, me), keyless: true }, stale: false };
     }
-    async function keylessMatches(k, a) {
-        const { me, puuid } = k;
-        await importClientHistory(me, puuid, !!a.refresh);
-        const group = C.QUEUE_GROUPS[a.group] ? a.group : 'all';
-        const start = Math.max(0, parseInt(a.start, 10) || 0), champId = champOf(a.champId);
+    // One page of a player's games listed in its `lcu` list (read from the client), newest first. No requests.
+    async function lcuPage(puuid, group, champId, start) {
         const doc = cache.player(puuid), ident = identOf(puuid);
         const ids = (doc.lcu || []).filter(id => { const r = doc.rows[id]; return r && C.inGroup(group, r.q) && (!champId || r.c === champId); })
             .sort((x, y) => doc.rows[y].end - doc.rows[x].end);
         const rows = [];
         for (const id of ids.slice(start, start + PAGE)) { const raw = await cache.getMatch(id), cm = raw && compactOf(raw); if (cm) rows.push(C.forViewer(cm, puuid, ident)); }
-        return { ok: true, puuid, group, champId, start, nextStart: start + PAGE, hasMore: start + PAGE < ids.length, matches: rows, stale: false, keyless: true,
+        return { matches: rows, nextStart: start + PAGE, hasMore: start + PAGE < ids.length };
+    }
+    async function keylessMatches(k, a) {
+        const { me, puuid } = k;
+        await importClientHistory(me, puuid, !!a.refresh);
+        const group = C.QUEUE_GROUPS[a.group] ? a.group : 'all';
+        const start = Math.max(0, parseInt(a.start, 10) || 0), champId = champOf(a.champId);
+        return { ok: true, puuid, group, champId, start, ...(await lcuPage(puuid, group, champId, start)), stale: false, keyless: true,
             warning: null, note: 'No Riot API key: your games come from the League client (its last 100 games, kept here as they arrive). Looking up other players needs a key.' };
     }
 
@@ -362,8 +432,9 @@ function register(deps) {
         let acct = await getAccount(gameName, tagLine, platform, { force: !!a.force });
         const st = partState(acct.puuid);
         let stale = false;
-        if (a.force) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me });
-        else if (st.missing.length) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me, only: st.missing.length === 3 ? null : st.missing });
+        const failed = {};
+        if (a.force) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me, failed });
+        else if (st.missing.length) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me, only: st.missing.length === 3 ? null : st.missing, failed });
         else if (st.stale.length) {
             stale = true;
             const k = acct.puuid, acct0 = acct;
@@ -374,7 +445,8 @@ function register(deps) {
                     .finally(() => refreshing.delete(k)));
             }
         }
-        return { ok: true, profile: buildProfile(acct, platform, me), stale };
+        const partial = partialOf(failed);
+        return { ok: true, profile: buildProfile(acct, platform, me), stale, ...(partial ? { partial } : {}) };
     });
 
     // ---------- matches ----------
@@ -386,17 +458,30 @@ function register(deps) {
         if (c) { compactLru.set(id, c); if (compactLru.size > 400) compactLru.delete(compactLru.keys().next().value); }
         return c;
     }
+    // Cache first. A game stored from the client's copy (metadata.src 'lcu': no lanes, no objectives) that Riot does serve
+    // (anything but ARAM Mayhem) is asked from Riot once per session when a key is set, and Riot's version replaces the file
+    // (`healed`: the caller rewrites the ledger row). Any failure keeps the client's copy.
+    const healTried = new Set();
+    const isClientCopy = raw => !!(raw && raw.metadata && raw.metadata.src === 'lcu');
     async function getMatch(id, platform, priority) {
         let raw = await cache.getMatch(id);
-        if (raw) return { raw, cached: true };
-        raw = await regionalGet(platform, `/lol/match/v5/matches/${id}`, { priority, nullOn404: true });
-        if (!raw || !raw.info) return { raw: null };
+        const heal = raw && isClientCopy(raw) && raw.info && raw.info.queueId !== C.MAYHEM_QUEUE && !!getRiotApiKey() && !healTried.has(id);
+        if (raw && !heal) return { raw, cached: true };
+        const clientCopy = raw;
+        if (heal) healTried.add(id);
+        try { raw = await regionalGet(platform, `/lol/match/v5/matches/${id}`, { priority, nullOn404: true }); }
+        catch (e) { if (clientCopy) return { raw: clientCopy, cached: true }; throw e; }
+        if (!raw || !raw.info) return clientCopy ? { raw: clientCopy, cached: true } : { raw: null };
         await cache.putMatch(id, raw);
-        return { raw, cached: false };
+        if (clientCopy) compactLru.delete(id);
+        return { raw, cached: false, healed: !!clientCopy };
     }
-    const noteRow = (puuid, cm) => {
+    // A row built from the client's copy (row.src 'lcu'; older rows carry no mark, then `replace` = getMatch `healed` says so) is
+    // rebuilt once Riot's version of the match is there.
+    const noteRow = (puuid, cm, replace) => {
         const doc = cache.player(puuid);
         const old = doc.rows[cm.id];
+        if (old && !cm.src && (replace || old.src === 'lcu')) { const r = C.ledgerRow(cm, puuid, identOf(puuid)); if (r) { doc.rows[cm.id] = r; return true; } return false; }
         if (old) {   // Arena rows saved before placements (or the lobby size) were recorded get them now
             if ((old.pl == null || old.tp == null) && C.ARENA_QUEUES.includes(cm.queueId)) { const r = C.ledgerRow(cm, puuid, identOf(puuid)); if (r && r.pl) { old.pl = r.pl; old.tp = r.tp; return true; } }
             return false;
@@ -412,12 +497,12 @@ function register(deps) {
         await pool(ids, conc, async (id, i) => {
             if (firstErr && ['KEY_REJECTED', 'NO_KEY', 'RATE_LIMITED', 'OFFLINE'].includes(firstErr.code)) return;
             try {
-                const { raw } = await getMatch(id, platform, priority);
+                const { raw, healed } = await getMatch(id, platform, priority);
                 if (!raw) return;
                 const cm = compactOf(raw);
                 if (!cm) return;
                 out[i] = cm;
-                if (noteRow(puuid, cm)) changed = true;
+                if (noteRow(puuid, cm, healed)) changed = true;
             } catch (e) { firstErr = firstErr || e; }
         });
         if (changed) cache.savePlayer(puuid);
@@ -462,6 +547,8 @@ function register(deps) {
         const group = C.QUEUE_GROUPS[a.group] ? a.group : 'all';
         const start = Math.max(0, parseInt(a.start, 10) || 0);
         const champId = champOf(a.champId);
+        // ARAM Mayhem: Riot's API never lists it, so its tab is the games recorded from the client (no request, works with a bad key)
+        if (C.QUEUE_GROUPS[group].clientOnly) return { ok: true, puuid, group, champId, start, ...(await lcuPage(puuid, group, champId, start)), stale: false, warning: null };
         const doc = cache.player(puuid);
         let idx = doc.idx[group];
         let stale = false;
@@ -510,15 +597,19 @@ function register(deps) {
             if (!(got.matches.length > kept.length && rows.length < 8 && slice.length > 0 && (!idx.complete || pos < idx.ids.length))) break;
         }
         const nextStart = pos, hasMore = !idx.complete || nextStart < idx.ids.length;
-        // games recorded from the client (ARAM Mayhem): the ones that fall between the previous page and this one, by time
+        // games recorded from the client (ARAM Mayhem): the ones that fall between the previous page and this one, by time.
+        // Both bounds come from the id list (the last id scanned, kept or not), so this page's lower bound is the next page's upper
+        // one: a game older than the last row kept but newer than a dropped Arena / other-champion game at the end lands on this page.
         const inIdx = new Set(idx.ids), lcuIds = (doc.lcu || []).filter(id => !inIdx.has(id));
         if (lcuIds.length) {
-            const prevRow = start > 0 ? doc.rows[idx.ids[start - 1]] : null;
-            const upper = prevRow && prevRow.end ? prevRow.end : Infinity, lower = hasMore && rows.length ? Math.min(...rows.map(m => m.end)) : -Infinity;
+            const prevRow = start > 0 ? doc.rows[idx.ids[start - 1]] : null, lastRow = hasMore && pos > 0 ? doc.rows[idx.ids[pos - 1]] : null;
+            const upper = prevRow && prevRow.end ? prevRow.end : Infinity;
+            const lower = !hasMore ? -Infinity : lastRow && lastRow.end ? lastRow.end : rows.length ? Math.min(...rows.map(m => m.end)) : -Infinity;
             for (const id of lcuIds) {
                 const r = doc.rows[id];
-                if (!r || !(r.end < upper && r.end >= lower) || !C.inGroup(group, r.q) || (champId && r.c !== champId)) continue;
-                const raw = await cache.getMatch(id), cm = raw && compactOf(raw);
+                if (!r || !(r.end < upper && r.end >= lower) || !C.inGroup(group, r.q) || (champId && r.c !== champId) || !cache.hasMatch(id)) continue;
+                const { raw, healed } = await getMatch(id, platform, PRIORITY.VISIBLE).catch(() => ({ raw: null })), cm = raw && compactOf(raw);   // a client copy Riot serves is healed
+                if (cm && healed && noteRow(puuid, cm, true)) cache.savePlayer(puuid);
                 if (cm) rows.push(C.forViewer(cm, puuid, ident));
             }
             rows.sort((x, y) => y.end - x.end);
@@ -528,9 +619,10 @@ function register(deps) {
 
     handle('match', async a => {
         const id = String(a.id || ''); if (!MATCH_RE.test(id)) throw new ProfileError('BAD_INPUT', 'Invalid match id.');
-        const { raw } = await getMatch(id, normPlatform(a.platform), PRIORITY.VISIBLE);
+        const { raw, healed } = await getMatch(id, normPlatform(a.platform), PRIORITY.VISIBLE);
         if (!raw) throw new ProfileError('NOT_FOUND', 'Match not found.');
         const puuid = PUUID_RE.test(String(a.puuid || '')) ? String(a.puuid) : null;
+        if (healed && puuid && cache.peekPlayer(puuid) && cache.peekPlayer(puuid).rows[id] && noteRow(puuid, compactOf(raw), true)) cache.savePlayer(puuid);
         return { ok: true, match: puuid ? C.forViewer(compactOf(raw), puuid, identOf(puuid)) : compactOf(raw) };
     });
 
@@ -663,7 +755,12 @@ function register(deps) {
             me: { gameName: me.gameName, tagLine: me.tagLine, platform: me.platform, positions: self ? pos(self) : [], assigned: myCell && myCell.assignedPosition ? String(myCell.assignedPosition).toUpperCase() : null } };
     });
     // Games you and a partner played on the same team, from your cached matches only: totals, champion pairs and both lanes.
-    // { owner: {puuid} | {gameName,tagLine,platform}, partner: {gameName,tagLine} }
+    // { owner: {puuid} | {gameName,tagLine,platform}, partner: {gameName,tagLine,puuid?} }
+    // A teammate is the partner when the puuid matches (games from before a Riot ID change: the Premades / Duo lists group by
+    // puuid) or the name#tag does (cached games from an older API key carry other puuids).
+    const partnerOf = p => ({ g: String(p && p.gameName || '').trim().toLowerCase(), t: String(p && p.tagLine || '').trim().replace(/^#/, '').toLowerCase(),
+        pu: p && PUUID_RE.test(String(p.puuid || '')) ? String(p.puuid) : null });
+    const isPartner = (p, w) => (!!w.pu && p.puuid === w.pu) || (!!w.g && String(p.name || '').toLowerCase() === w.g && (!w.t || String(p.tag || '').toLowerCase() === w.t));
     handle('duo-history', async a => {
         const o = a.owner || {};
         let puuid = o.puuid && PUUID_RE.test(String(o.puuid)) ? String(o.puuid) : null;
@@ -672,8 +769,8 @@ function register(deps) {
             if (!g || !t) throw new ProfileError('BAD_INPUT', 'No account to read.');
             puuid = await resolvePuuid(g, t, normPlatform(o.platform));
         }
-        const pg = String(a.partner && a.partner.gameName || '').trim().toLowerCase(), pt = String(a.partner && a.partner.tagLine || '').trim().replace(/^#/, '').toLowerCase();
-        if (!pg) throw new ProfileError('BAD_INPUT', 'No partner.');
+        const want = partnerOf(a.partner);
+        if (!want.g && !want.pu) throw new ProfileError('BAD_INPUT', 'No partner.');
         const doc = cache.peekPlayer(puuid);
         const rows = doc ? Object.values(doc.rows).filter(r => !r.rm && !C.isExcludedFromAll(r.q)).sort((x, y) => y.end - x.end).slice(0, 400) : [];
         const cms = new Array(rows.length).fill(null);
@@ -685,7 +782,7 @@ function register(deps) {
             out.scanned++;
             const me = C.findMe(cm, puuid, identOf(puuid));
             if (!me) continue;
-            const mate = cm.players.find(p => p !== me && p.team === me.team && String(p.name || '').toLowerCase() === pg && (!pt || String(p.tag || '').toLowerCase() === pt));
+            const mate = cm.players.find(p => p !== me && p.team === me.team && isPartner(p, want));
             if (!mate) continue;
             out.games++; if (me.win) out.w++;
             const pk = `${me.champId}|${mate.champId}`, lk = `${me.pos || ''}|${mate.pos || ''}`;
@@ -701,7 +798,7 @@ function register(deps) {
         return out;
     });
 
-    // your games with several premades at once (Premades stack planner): every partner on your team
+    // your games with several premades at once (Premades stack planner): every partner on your team (partners matched like duo-history)
     handle('group-history', async a => {
         const o = a.owner || {};
         let puuid = o.puuid && PUUID_RE.test(String(o.puuid)) ? String(o.puuid) : null;
@@ -710,7 +807,7 @@ function register(deps) {
             if (!g || !t) throw new ProfileError('BAD_INPUT', 'No account to read.');
             puuid = await resolvePuuid(g, t, normPlatform(o.platform));
         }
-        const want = (Array.isArray(a.partners) ? a.partners : []).slice(0, 4).map(p => ({ g: String(p && p.gameName || '').trim().toLowerCase(), t: String(p && p.tagLine || '').trim().replace(/^#/, '').toLowerCase() })).filter(p => p.g);
+        const want = (Array.isArray(a.partners) ? a.partners : []).slice(0, 4).map(partnerOf).filter(p => p.g || p.pu);
         if (!want.length) throw new ProfileError('BAD_INPUT', 'No partners.');
         const doc = cache.peekPlayer(puuid);
         const rows = doc ? Object.values(doc.rows).filter(r => !r.rm && !C.isExcludedFromAll(r.q)).sort((x, y) => y.end - x.end).slice(0, 400) : [];
@@ -723,7 +820,7 @@ function register(deps) {
             out.scanned++;
             const me = C.findMe(cm, puuid, identOf(puuid));
             if (!me) continue;
-            const mates = want.map(w => cm.players.find(p => p !== me && p.team === me.team && String(p.name || '').toLowerCase() === w.g && (!w.t || String(p.tag || '').toLowerCase() === w.t)));
+            const mates = want.map(w => cm.players.find(p => p !== me && p.team === me.team && isPartner(p, w)));
             if (mates.some(m => !m)) continue;
             out.games++; if (me.win) out.w++;
             const all = [me, ...mates], ck = all.map(p => `${p.champId}@${p.pos || ''}`).join('|'), lk = all.map(p => p.pos || '').join('|');
@@ -774,13 +871,14 @@ function register(deps) {
             const run = async pu => {
                 const doc = cache.player(pu);
                 done = 0;
+                // Riot lists this season's games only (startTime, epoch seconds); a game older than that still stops the run at once
                 for (let start = 0; start < 1000 && !ctl.cancel && done < max; start += 100) {
                     announceWait();
-                    const ids = await guard(regionalGet(platform, idsPath(pu, 'all', start, 100), { priority: PRIORITY.BACKGROUND, nullOn404: true }), BACKFILL_STEP_MS) || [];
+                    const ids = await guard(regionalGet(platform, idsPath(pu, 'all', start, 100) + '&startTime=' + Math.floor(since / 1000), { priority: PRIORITY.BACKGROUND, nullOn404: true }), BACKFILL_STEP_MS) || [];
                     if (!ids.length) break;
                     const need = ids.filter(id => !doc.rows[id]);
                     let reachedOld = false;
-                    for (let i = 0; i < need.length && !ctl.cancel && done < max; i += 5) {
+                    for (let i = 0; i < need.length && !ctl.cancel && done < max && !reachedOld; i += 5) {
                         const batch = need.slice(i, i + 5);
                         announceWait();
                         const { matches } = await guard(loadMatches(batch, pu, platform, PRIORITY.BACKGROUND, 5), BACKFILL_STEP_MS);
@@ -886,7 +984,9 @@ function register(deps) {
         catch (e) {
             if (e.code !== 'STALE_PUUID') throw e;
             dropAccountCache(acct.puuid);
-            acct = await getAccount(gameName, tagLine, platform, { priority: PRIORITY.LIVE, force: true, noStale: true });
+            const old = acct.puuid;
+            acct = await getAccount(gameName, tagLine, platform, { priority: PRIORITY.LIVE, force: true, noStale: true, adopt: false });
+            adoptPlayer(old, acct.puuid);
             game = await spectate(acct.puuid);
         }
         const roster = owner ? await lcuRoster() : null;
@@ -1137,14 +1237,14 @@ function register(deps) {
         const platform = normPlatform(a.platform);
         const me = await getMe();
         let acct = await getAccount(gameName, tagLine, platform, { priority: PRIORITY.VISIBLE });
-        const st = partState(acct.puuid);
-        if (st.missing.length || st.stale.length) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me, only: [...new Set([...st.missing, ...st.stale])] });
-        const profile = buildProfile(acct, platform, me);
+        const st = partState(acct.puuid), failed = {};
+        if (st.missing.length || st.stale.length) acct = await fetchPartsRecovering(acct, platform, { priority: PRIORITY.VISIBLE, me, only: [...new Set([...st.missing, ...st.stale])], failed });
+        const profile = buildProfile(acct, platform, me), partial = partialOf(failed);
         let form = null, formError = null;
         try { form = (await withRecovery(acct.puuid, platform, p => scoutOne(p, platform, 0), PRIORITY.VISIBLE)).form; }
         catch (e) { formError = errorToResult(e); }
         const tags = LV.computeTags({ ranked: profile.ranked, summonerLevel: profile.summonerLevel, form: form ? { results: form.results.map(x => !!x.win) } : null });
-        return { ok: true, profile, form, formError, tags };
+        return { ok: true, profile, form, formError, tags, ...(partial ? { partial } : {}) };
     });
 
     async function scoutOne(puuid, platform, champId) {
@@ -1187,7 +1287,9 @@ function register(deps) {
         await platformGet('EUW1', '/lol/status/v4/platform-data', { priority: PRIORITY.VISIBLE });
         return { ok: true, ms: Date.now() - t, limits: riot.limiter.windows.map(([n, ms]) => `${n + 1}/${ms / 1000}s`).join(', '), message: 'Riot API key accepted.' };
     });
-    handle('me', async () => ({ ok: true, me: await getMe(), lcu: lcu.isUp(), phase: poller.phase() }));
+    // queueId: the queue the phase poller read for the current phase (champion select / in game), so a window that missed the
+    // first profile:phase push (started during an ARAM / Arena champion select) still knows the mode
+    handle('me', async () => { const phase = poller.phase(); return { ok: true, me: await getMe(), lcu: lcu.isUp(), phase, queueId: phaseQueue.phase === phase ? phaseQueue.queueId : null }; });
     handle('owner', async a => {
         const me = await getMe().catch(() => null);
         const out = (acct, source) => ({ ok: true, owner: { gameName: acct.gameName, tagLine: acct.tagLine, platform: acct.platform, puuid: cachedPuuid(acct.gameName, acct.tagLine, acct.platform) || acct.puuid || null }, source });
@@ -1217,11 +1319,13 @@ function register(deps) {
             lcu: { up: lcu.isUp(), phase: poller.phase() }
         };
     });
-    // what: 'lookups' (accounts, ranks, mastery, op.gg pages: fetched again when needed; downloaded matches are kept)
+    // what: 'lookups' (accounts, ranks, mastery, op.gg pages: fetched again when needed; downloaded matches are kept, and so is
+    //       what was only ever recorded here: the LP history 'lp:' / 'lp-last' and the client's previous-season ranks 'lcuprev:')
     //       'opgg-backoff' (forget op.gg failures so it is asked again now)
     handle('cache-clear', async a => {
         const what = String(a.what || '');
-        if (what === 'lookups') return { ok: true, removed: cache.dropMeta(k => !k.startsWith('puuid:') && k !== 'owner-last' && k !== 'queues' && k !== 'queues-cd' && k !== 'opgg-action') };
+        if (what === 'lookups') return { ok: true, removed: cache.dropMeta(k => !k.startsWith('puuid:') && k !== 'owner-last' && k !== 'queues' && k !== 'queues-cd' && k !== 'opgg-action'
+            && !k.startsWith('lp:') && k !== 'lp-last' && !k.startsWith('lcuprev:')) };
         if (what === 'opgg-backoff') return { ok: true, removed: cache.dropMeta(k => k === 'opgg-block' || k === 'opgg-actfail' || k.startsWith('opgg-fail')) };
         throw new ProfileError('BAD_INPUT', 'Unknown cache.');
     });
@@ -1278,7 +1382,7 @@ function register(deps) {
             store[lcuPuuid] = lcuHistory.mergeGameHistory(store[lcuPuuid], games);
             store._riotChecked = store._riotChecked || {};
             store._riotChecked[lcuPuuid] = [...new Set([...(store._riotChecked[lcuPuuid] || []), ...games.map(g => g.gameId)])];
-            fs.writeFileSync(file, JSON.stringify(store));
+            require('./json-store').writeJsonAtomic(file, store);   // same atomic write as main.js (a crash can't leave the file empty)
             return games.length;
         } catch (e) { return 0; /* history file is best effort */ }
     }
@@ -1317,41 +1421,56 @@ function register(deps) {
         catch (e) {
             if (e.code !== 'STALE_PUUID') throw e;
             dropAccountCache(acct.puuid);
-            acct = await getAccount(me.gameName, me.tagLine, me.platform, { priority: PRIORITY.VISIBLE, force: true, noStale: true });
+            const old = acct.puuid;
+            acct = await getAccount(me.gameName, me.tagLine, me.platform, { priority: PRIORITY.VISIBLE, force: true, noStale: true, adopt: false });
+            adoptPlayer(old, acct.puuid);
             return await refreshOwnerWith(acct, me);
         }
     }
+    // New ids at the head of the list, plus head ids whose match could not be downloaded yet (Riot can list a game a moment
+    // before it serves it). `added` and the push count the games actually loaded, so the toast never announces a missing game.
     async function refreshOwnerWith(acct, me) {
         const added = await refreshHead(acct.puuid, me.platform, 'all', PRIORITY.VISIBLE, 5);
-        if (added.length) {
-            const { matches } = await loadMatches(added, acct.puuid, me.platform, PRIORITY.VISIBLE);
-            for (const id of added) { const raw = await cache.getMatch(id); if (raw) updatePersonalHistory(me.lcuPuuid, acct.puuid, raw); }
+        const head = (cache.player(acct.puuid).idx.all || { ids: [] }).ids.slice(0, 5);
+        const want = [...added, ...head.filter(id => !added.includes(id) && !cache.hasMatch(id))];
+        if (want.length) {
+            const { matches } = await loadMatches(want, acct.puuid, me.platform, PRIORITY.VISIBLE);
+            const got = matches.map(m => m.id);
+            for (const id of got) { const raw = await cache.getMatch(id); if (raw) updatePersonalHistory(me.lcuPuuid, acct.puuid, raw); }
             // other queue lists are now out of date
             const doc = cache.player(acct.puuid);
-            for (const g of Object.keys(doc.idx)) if (g !== 'all') doc.idx[g].at = 0;
+            if (added.length) for (const g of Object.keys(doc.idx)) if (g !== 'all') doc.idx[g].at = 0;
             cache.savePlayer(acct.puuid);
+            if (!got.length) return { added: 0, puuid: acct.puuid };
             await fetchParts(acct, me.platform, { priority: PRIORITY.VISIBLE, me, only: ['league', 'summoner'] }).catch(e => { if (e.code === 'STALE_PUUID') throw e; });
-            push('profile:update', { kind: 'matches', owner: true, puuid: acct.puuid, group: 'all', added: added.length, ids: added });
+            push('profile:update', { kind: 'matches', owner: true, puuid: acct.puuid, group: 'all', added: got.length, ids: got });
             push('profile:update', { kind: 'profile', puuid: acct.puuid, profile: buildProfile(acct, me.platform, me) });
-            return { added: added.length, matches: matches.length, puuid: acct.puuid };
+            return { added: got.length, matches: matches.length, puuid: acct.puuid };
         }
         return { added: 0, puuid: acct.puuid };
     }
-    // After a game: ask Riot for the owner's newest games until the game that just ended is in the list (Riot can take 10+ minutes
-    // to publish it). Only a missing or rejected key stops it early; a moment without the client's region ('no-client') is retried.
-    // ARAM Mayhem is never in Riot's API: that game is read from the client instead (recordClientGame).
-    let wasInGame = false, refreshRun = 0, lastGame = null;
+    // After a game: ask Riot for the owner's newest games until the game that just ended is in the list and downloaded (Riot can
+    // take 10+ minutes to publish it). Only a missing or rejected key stops it early (a rejected key is pushed once per key:
+    // profile:update { kind:'key-rejected', owner:true }); a moment without the client's region ('no-client') is retried.
+    // ARAM Mayhem is never in Riot's API: that game is read from the client instead (recordClientGame). It does not cancel a
+    // refresh still waiting for the previous (Riot) game.
+    let wasInGame = false, refreshRun = 0, lastGame = null, keyRejectedFor = null;
     const delays = deps.autoRefreshDelays || [20000, 60000, 120000, 240000, 600000, 1200000];
-    const hasGame = (puuid, gameId) => { const doc = puuid && cache.peekPlayer(puuid); const idx = doc && doc.idx.all; return !!idx && idx.ids.some(id => id.endsWith('_' + gameId)); };
+    const hasGame = (puuid, gameId) => { const doc = puuid && cache.peekPlayer(puuid); const idx = doc && doc.idx.all; return !!idx && idx.ids.some(id => id.endsWith('_' + gameId) && cache.hasMatch(id)); };
     async function scheduleAutoRefresh(game = {}) {
-        const run = ++refreshRun;
         if (game.queueId === C.MAYHEM_QUEUE) { await recordClientGame(game).catch(() => null); return; }
+        const run = ++refreshRun;
         const target = game.gameId ? String(game.gameId) : null;
         for (const d of delays) {
             await sleep(d);
             if (run !== refreshRun) return;
             let r;
-            try { r = await refreshOwner(); } catch (e) { if (['KEY_REJECTED', 'NO_KEY'].includes(e.code)) return; continue; }
+            try { r = await refreshOwner(); }
+            catch (e) {
+                if (e.code === 'KEY_REJECTED') { const k = getRiotApiKey(); if (k && k !== keyRejectedFor) { keyRejectedFor = k; push('profile:update', { kind: 'key-rejected', owner: true }); } }
+                if (['KEY_REJECTED', 'NO_KEY'].includes(e.code)) return;
+                continue;
+            }
             if (r.skipped === 'no-key') return;
             if (r.skipped) continue;
             if (target ? hasGame(r.puuid, target) : r.added) return;
@@ -1372,25 +1491,30 @@ function register(deps) {
         try { return (await getAccount(me.gameName, me.tagLine, me.platform, { priority: PRIORITY.VISIBLE })).puuid; } catch (e) { return null; }
     }
     async function recordClientGame(game) {
-        const me = await getMe().catch(() => null);
-        if (!me || !me.platform || !me.lcuPuuid || !game || !game.gameId) return { ok: false, skipped: 'no-client' };
-        const puuid = await ownerApiPuuid(me);
-        if (!puuid) return { ok: false, skipped: 'no-account' };
-        let g = null;
-        for (const d of clientGameDelays) {        // the client writes the game into its history a few seconds after the end
+        if (!game || !game.gameId) return { ok: false, skipped: 'no-client' };
+        let me = null, puuid = null, g = null, skipped = 'no-client';
+        // The client writes the game into its history a few seconds after the end, and its account / region can be unreadable
+        // for a moment right at the end: both are tried again on every delay, and the game is given up only after the last one.
+        for (const d of clientGameDelays) {
             await sleep(d);
+            if (!me) { meCache.at = 0; const m = await getMe().catch(() => null); if (m && m.platform && m.lcuPuuid) me = m; }
+            if (!me) { skipped = 'no-client'; continue; }
+            if (!puuid) puuid = await ownerApiPuuid(me);
+            if (!puuid) { skipped = 'no-account'; continue; }
             g = await lcu.get(`/lol-match-history/v1/games/${game.gameId}`).catch(() => null);
             if (g && Array.isArray(g.participants) && g.participants.length) break;
-            g = null;
+            g = null; skipped = 'not-found';
         }
-        if (!g) return { ok: false, skipped: 'not-found' };
+        if (!g) return { ok: false, skipped };
         const raw = C.lcuGameToMatch(g, { platform: me.platform, ownerLcuPuuid: me.lcuPuuid, ownerApiPuuid: puuid });
-        const cm = raw && compactOf(raw);
-        if (!cm || !C.findMe(cm, puuid)) return { ok: false, skipped: 'not-yours' };
-        await cache.putMatch(cm.id, raw);
+        const conv = raw && C.compactMatch(raw);   // not memoised: Riot's version of the game may be the one to keep
+        if (!conv || !C.findMe(conv, puuid)) return { ok: false, skipped: 'not-yours' };
+        const prev = cache.hasMatch(conv.id) ? await cache.getMatch(conv.id) : null;
+        if (!prev || isClientCopy(prev)) { await cache.putMatch(conv.id, raw); compactLru.delete(conv.id); }   // never replace Riot's version
+        const cm = compactOf(prev && !isClientCopy(prev) ? prev : raw);
         const doc = cache.player(puuid);
         noteRow(puuid, cm);
-        doc.lcu = [cm.id, ...(doc.lcu || []).filter(x => x !== cm.id)].slice(0, 300);
+        doc.lcu = [cm.id, ...(doc.lcu || []).filter(x => x !== cm.id)].slice(0, LCU_LIST_MAX);
         cache.savePlayer(puuid);
         push('profile:update', { kind: 'matches', owner: true, puuid, group: 'all', added: 1, ids: [cm.id], src: 'lcu' });
         return { ok: true, id: cm.id };
@@ -1474,6 +1598,7 @@ function register(deps) {
         return out;
     });
 
+    let phaseQueue = { phase: null, queueId: null };   // the last phase change and its queue (null outside champion select / a game)
     const poller = createPhasePoller(lcu, async (prev, next) => {
         meCache.at = 0;
         const active = ACTIVE_PHASES.has(next);
@@ -1483,6 +1608,7 @@ function register(deps) {
             const fs = await lcu.get('/lol-gameflow/v1/session').catch(() => null);
             queueId = fs && fs.gameData && fs.gameData.queue && typeof fs.gameData.queue.id === 'number' ? fs.gameData.queue.id : null;
         }
+        if (poller.phase() === next) phaseQueue = { phase: next, queueId };   // (profile:me; not when the phase moved on meanwhile)
         push('profile:phase', { prev, next, queueId });
         if (next === 'ChampSelect' || (active && !lpPending)) lpBefore(queueId).catch(() => {});
         else if (prev === 'ChampSelect' && !active && lpPending) lpAfter(true).catch(() => {});   // left champion select: dodge?
@@ -1499,7 +1625,35 @@ function register(deps) {
     }, deps.pollMs || 5000);
     if (!deps.noPoll) poller.start(deps.pollStartDelay == null ? 2000 : deps.pollStartDelay);
 
-    return { cache, riot, lcu, poller, refreshOwner, flush: () => cache.flush() };
+    // ---------- meta.json housekeeping ----------
+    // Every TTL entry lives in one meta.json document, and each live game adds op.gg pages, champion stats, mastery and ranks for
+    // nine other players. Those entries (opgg:, opchamps:, opgg-fail*, mc:, lg:, sum:, ms:) are dropped once untouched for
+    // META_PRUNE_AGE, and at most META_PRUNE_MAX of them are kept (oldest first out); at start-up, then daily. Riot IDs, accounts,
+    // the LP history, queue names and the owner's own rank / mastery stay.
+    const META_PRUNE_AGE = 30 * 24 * 3600e3, META_PRUNE_MAX = deps.metaPruneMax || 4000;
+    const PRUNABLE = /^(opgg:|opchamps:|opgg-fail|mc:|lg:|sum:|ms:)/;
+    function pruneMeta(now = Date.now()) {
+        const last = cache.getMeta('owner-last'), la = last && last.data;
+        const own = new Set([la && la.puuid, la && la.gameName && la.platform ? cachedPuuid(la.gameName, la.tagLine, la.platform) : null].filter(Boolean));
+        const mine = k => { const i = k.indexOf(':'), rest = k.slice(i + 1); return /^(mc|lg|sum|ms):/.test(k) && own.has(k.startsWith('mc:') ? rest.split(':')[0] : rest); };
+        const kept = [];
+        let removed = cache.dropMeta((k, e) => {
+            if (!PRUNABLE.test(k) || mine(k)) return false;
+            if (!e || !(now - (e.at || 0) < META_PRUNE_AGE)) return true;
+            kept.push([k, e.at]); return false;
+        });
+        if (kept.length > META_PRUNE_MAX) {
+            kept.sort((x, y) => x[1] - y[1]);
+            const drop = new Set(kept.slice(0, kept.length - META_PRUNE_MAX).map(x => x[0]));
+            removed += cache.dropMeta(k => drop.has(k));
+        }
+        return removed;
+    }
+    try { const n = pruneMeta(); if (n) log(`profile cache: pruned ${n} old look-up entries`); } catch (e) { /* best effort */ }
+    const pruneTimer = setInterval(() => { try { pruneMeta(); } catch (e) { /* best effort */ } }, 24 * 3600e3);
+    if (pruneTimer.unref) pruneTimer.unref();
+
+    return { cache, riot, lcu, poller, refreshOwner, pruneMeta, flush: () => cache.flush() };
 }
 
 // Call when the Riot API key changes (a key from another project encrypts puuids differently): forgets the cached

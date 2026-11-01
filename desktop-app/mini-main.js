@@ -5,6 +5,7 @@
 //   mini:open / mini:close / mini:toggle ()  -> { ok, open }
 //   mini:state  ()          -> { ok, open }
 //   mini:update (payload)   -> { ok }   latest rows from the main window, forwarded to the mini window as 'mini:data'
+//   mini:show-main ()       -> { ok }   bring the main window up, also from the tray (the main window's Windows-notification click)
 // From the mini window (its own channels, not the feature bridge): 'mini-w:ready' (send the last rows), 'mini-w:close',
 // 'mini-w:focus-main', 'mini-w:pick' {id} (bring the main window up and tell it which row was clicked).
 // Pushes to the main window: 'mini:state' { open }, 'mini:pick' { id, mode }.
@@ -72,7 +73,14 @@ function register(deps) {
     const fromMini = e => !!(win && !win.isDestroyed() && e.sender === win.webContents);
     ipcMain.on('mini-w:ready', e => { if (fromMini(e) && last) e.sender.send('mini:data', last); });
     ipcMain.on('mini-w:close', e => { if (fromMini(e)) close(); });
-    const focusMain = () => { const m = getMainWindow && getMainWindow(); if (m && !m.isDestroyed()) { if (m.isMinimized()) m.restore(); m.focus(); } };
+    // the main window up, also when close-to-tray hid it: the tray's "Open DravenGap" (deps.showMain = tray-main show(): restore,
+    // show, focus; it opens a new window when there is none), else the same steps here (show() never while tests run hidden)
+    const focusMain = () => {
+        if (typeof deps.showMain === 'function') return deps.showMain();
+        const m = getMainWindow && getMainWindow();
+        if (m && !m.isDestroyed()) { if (m.isMinimized()) m.restore(); if (!m.isVisible() && !deps.hidden) m.show(); m.focus(); }
+    };
+    ipcMain.handle('mini:show-main', () => { focusMain(); return { ok: true }; });
     ipcMain.on('mini-w:focus-main', e => { if (fromMini(e)) focusMain(); });
     ipcMain.on('mini-w:pick', (e, p) => {
         if (!fromMini(e) || !p || typeof p.id !== 'string' || p.id.length > 40) return;

@@ -59,7 +59,8 @@ const summary = { ok: true, puuid: 'P'.padEnd(78, 'x'), games: 12, w: 8, k: 90, 
         // synergies
         const sy = await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="synergies"]').click(); await new Promise(r => setTimeout(r, 50));
             return [...document.querySelectorAll('#champion-root .ch-card-h')].map(x => x.textContent.trim()); })()`);
-        R.ok('synergies: one card per ally role', sy.length === 4 && sy.some(x => /With Bot/.test(x)) && sy.some(x => /With Jungle/.test(x) && /jungle/.test(x)), sy);
+        // (no "jungle" tag on ally cards: teammates use the plain ally prior, the jungle class is for enemies only)
+        R.ok('synergies: one card per ally role', sy.length === 4 && sy.some(x => /With Bot/.test(x)) && sy.some(x => /With Jungle/.test(x) && !/jungle/.test(x)), sy);
         // builds (nothing saved)
         const bd = await h.ev(`(async () => { document.querySelector('#champion-root [data-tab="builds"]').click(); for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 100)); const t = document.querySelector('#champion-root .ch-body').textContent; if (!/Reading/.test(t)) return t; } return 'timeout'; })()`);
         R.ok('builds: explains on-demand download when nothing is saved', /No Coachless data saved/.test(bd) && /Download in Builds/.test(bd), bd.slice(0, 160));

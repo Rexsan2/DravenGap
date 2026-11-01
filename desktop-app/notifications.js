@@ -6,6 +6,8 @@
 //            New patch data downloaded: DD.notify.dataReady({ patch }) / ({ kind:'scrape', saved }) from the freshness code
 //            in index.html. Coachless download finished for the champion you opened: DD.notify.coachless(...) from Builds.
 //            Champion select started: profile:phase.
+//            Riot key rejected by the post-game refresh: profile:update { kind:'key-rejected', owner:true } (main sends it once per
+//            key), so games that stop arriving after a Development key expires are explained.
 //   Quiet    The same event never shows twice; nothing shows during champion select except the champion-select-start toast
 //            (the rest is held and shown after it).
 //   Settings Settings > Automation: notifyToasts (in-app toasts, default on) and notifyWindows ("Also show Windows
@@ -27,11 +29,20 @@
     const ownProfile = () => (window.DDProfile && window.DDProfile.openOwner ? window.DDProfile.openOwner() : profile('summary'));
 
     // ---- one notification: in-app toast (+ a Windows notification when asked for and the window is in the background)
-    function winNotify(text, key) {
+    // A click on the Windows notification brings the window back (also from the tray: mini:show-main runs the tray's "Open
+    // DravenGap") and then does what the toast's own button does (opts.action).
+    function showMainWindow() {
+        if (api) api.invoke('mini:show-main').catch(() => {});
+        try { window.focus(); } catch (e) { /* ignore */ }
+    }
+    function winNotify(text, key, opts = {}) {
         if (!N.windows || typeof window.Notification !== 'function') return;
         if (OPTS.winOnlyWhenUnfocused && !document.hidden && document.hasFocus()) return;
         try {
-            const go = () => { const n = new window.Notification('DravenGap', { body: text, tag: key, silent: true }); n.onclick = () => { try { window.focus(); } catch (e) { /* ignore */ } }; };
+            const go = () => {
+                const n = new window.Notification('DravenGap', { body: text, tag: key, silent: true });
+                n.onclick = () => { showMainWindow(); if (typeof opts.action === 'function') { try { opts.action(); } catch (e) { /* the view is gone */ } } };
+            };
             const p = window.Notification.permission;
             if (p === 'granted') go();
             else if (p !== 'denied' && window.Notification.requestPermission) Promise.resolve(window.Notification.requestPermission()).then(r => { if (r === 'granted') go(); }).catch(() => {});
@@ -48,7 +59,7 @@
         }
         N.seen.set(key, now);
         if (N.seen.size > 200) for (const k of [...N.seen.keys()].slice(0, 100)) N.seen.delete(k);
-        winNotify(text, key);
+        winNotify(text, key, opts);
         return opts.noToast ? null : DD.toast(text, { action: opts.action, actionLabel: opts.actionLabel, ms: opts.ms });
     }
     function flushHeld() {
@@ -90,6 +101,12 @@
         }
         clearTimeout(N.lpTimer);                                             // wait a little for the profile update, else say it alone
         N.lpTimer = setTimeout(() => { if (!lp.used) { lp.used = true; show(key, `Ranked game: ${lpPart(lp)}`, { action: ownProfile, actionLabel: 'Open' }); } }, OPTS.lpGraceMs);
+    }
+
+    // ---- the post-game refresh found the Riot key rejected (a Development key expires after 24 h): say so, with a way to fix it
+    function onKeyRejected() {
+        show('key-rejected', 'Your Riot key was rejected: paste a new one in Settings.', { ms: 12000, actionLabel: 'Open Settings',
+            action: () => { const b = document.getElementById('settings-btn'); if (b) b.click(); } });
     }
 
     // ---- champion select started (and the phase, for the quiet rule)
@@ -149,7 +166,7 @@
     });
 
     if (api) {
-        api.on('profile:update', ev => { if (ev && ev.kind === 'matches') onMatches(ev); else if (ev && ev.kind === 'lp') onLp(ev.entry); });
+        api.on('profile:update', ev => { if (ev && ev.kind === 'matches') onMatches(ev); else if (ev && ev.kind === 'lp') onLp(ev.entry); else if (ev && ev.kind === 'key-rejected') onKeyRejected(); });
         api.on('profile:phase', onPhase);
         api.invoke('profile:me').then(r => { if (r && r.ok && r.phase && N.phase == null) N.phase = r.phase; }).catch(() => {});
     }

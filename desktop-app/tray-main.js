@@ -2,11 +2,11 @@
 // refresh, notifications and the mini window keep working), one instance only (starting it again shows the window), and
 // "Start with Windows" (opens hidden in the tray). Settings (settings.json): trayMode (default on), startWithWindows (default off).
 const { Tray, Menu, nativeImage, Notification } = require('electron');
-const fs = require('fs');
+const { readJson, writeJsonAtomic } = require('./json-store');
 
 function register({ app, getMainWindow, createWindow, settingsFilePath, iconPath, openMini }) {
     let tray = null, quitting = false, hintShown = false;
-    const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')) || {}; } catch (e) { return {}; } };
+    const readSettings = () => { try { return readJson(settingsFilePath, {}) || {}; } catch (e) { return {}; } };
     const trayMode = () => readSettings().trayMode !== false;
     const startedHidden = process.argv.includes('--hidden');
 
@@ -39,7 +39,7 @@ function register({ app, getMainWindow, createWindow, settingsFilePath, iconPath
     }
     function save(patch) {
         const next = { ...readSettings(), ...patch };
-        try { fs.writeFileSync(settingsFilePath, JSON.stringify(next, null, 2)); } catch (e) { return; }
+        try { writeJsonAtomic(settingsFilePath, next, { pretty: true }); } catch (e) { return; }
         settingsChanged(next);   // the Settings checkboxes read the file again when the window is next focused
     }
     function ensureTray() {

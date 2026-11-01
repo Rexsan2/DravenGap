@@ -74,7 +74,11 @@ function register({ ipcMain, getLeagueCredentials, lcuRequest }) {
         if (!ok2xx(pagesR) || !Array.isArray(pagesR.json)) return errOf(pagesR, 'Reading your rune pages');
         const pages = pagesR.json;
         let target = pages.find(p => p.isEditable && typeof p.name === 'string' && p.name.startsWith(PAGE_PREFIX));
-        if (!target && req.replaceCurrent) target = pages.find(p => p.current && p.isEditable);
+        if (!target && req.replaceCurrent) {
+            target = pages.find(p => p.current && p.isEditable);
+            // a preset page (not editable) is current: creating a page would only fail with "no free page" again
+            if (!target) return { ok: false, code: 'CURRENT_PRESET', error: 'Your current rune page is a preset page, which cannot be changed: select one of your own pages in the client, then try again.' };
+        }
         if (target) {
             const put = await lcuSend(creds, 'PUT', `/lol-perks/v1/pages/${target.id}`, { ...body, id: target.id });
             if (!ok2xx(put)) return errOf(put, 'Updating the rune page');
@@ -83,9 +87,12 @@ function register({ ipcMain, getLeagueCredentials, lcuRequest }) {
         }
         const post = await lcuSend(creds, 'POST', '/lol-perks/v1/pages', body);
         if (ok2xx(post)) return { ok: true, action: 'created', name };
-        // usually: every rune page slot is in use
+        // every rune page slot in use (the client says "Max pages reached"; no message at all is read the same way). Any other
+        // refusal (e.g. a rune id the client no longer accepts) is reported as it is: replacing a page would not help.
+        const msg = (post.json && post.json.message) || '';
+        if (msg && !/max|limit|full/i.test(msg)) return errOf(post, 'Creating the rune page');
         const editable = pages.filter(p => p.isEditable);
-        return { ok: false, code: 'PAGES_FULL', error: `No free rune page (${editable.length} in use). Use "Replace current page", or rename one of your pages to start with "${PAGE_PREFIX}" so it gets reused.`, detail: post.json && post.json.message };
+        return { ok: false, code: 'PAGES_FULL', error: `No free rune page (${editable.length} in use). Use "Replace current page", or rename one of your pages to start with "${PAGE_PREFIX}" so it gets reused.`, detail: msg || undefined };
     }));
 
     // { spell1Id, spell2Id }: champion select only. Flash keeps the side (D/F) it is on now.

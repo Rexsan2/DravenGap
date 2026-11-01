@@ -31,7 +31,7 @@
 
     const S = {
         ready: false, active: false, bracket: 'all', tier: null, tierErr: null, byCid: new Map(), bySlug: new Map(), ddByKey: new Map(),
-        augMeta: null, cs: null, csSig: '', polling: false, timer: null, autoMine: 0, left: 'auto', search: '', sort: { key: 'rank', dir: 1 },
+        augMeta: null, cs: null, csSig: '', inCs: false, polling: false, timer: null, autoMine: 0, left: 'auto', search: '', sort: { key: 'rank', dir: 1 },
         selected: null, build: {}, rarity: 'all', pickRound: 0, itemTab: 'start', showAll: {}, lastErr: ''
     };
     try { const b = localStorage.getItem(TIER_KEY); if (b === 'all' || b === 'emerald_plus') S.bracket = b; } catch (e) { /* default */ }
@@ -55,11 +55,22 @@
     const bracketLabel = b => (b === 'emerald_plus' ? 'Emerald+' : 'All ranks');
 
     // ---- data loading --------------------------------------------------------------------------------------------------------
-    async function loadTier(force) {
+    // Cache key (as arena-main names it: 'tier-<bracket>', 'champ-<slug>-<bracket>') -> error of its last failed background refresh
+    // ('arena:updated' with an error): the view then says "saved copy, could not refresh" instead of "refreshing". Cleared by a
+    // successful refresh or a fresh answer.
+    const failedRefresh = new Map();
+    const forget = (key, r) => { if (r && r.ok && !r.stale) failedRefresh.delete(key); };
+    // A chip's "Refresh now" message from what main answered (a failed fetch with a saved copy is { ok:true, stale:true, error })
+    const refreshMsg = r => ({ message: r && r.error ? `Could not refresh: ${r.error}${r.ok ? ' (showing the saved copy)' : ''}` : 'Fetched again.' });
+    let tierSeq = 0;
+    async function loadTier(force) {   // -> what main answered (undefined when a newer request replaced this one)
+        const seq = ++tierSeq;
         const r = await api.invoke('arena:tier-list', { tier: S.bracket, force: !!force }).catch(e => ({ ok: false, error: e.message }));
-        if (r && r.ok) { S.tier = Object.assign({}, r.data, { fetchedAt: r.fetchedAt, stale: r.stale }); S.tierErr = r.error || null; buildMaps(); }
+        if (seq !== tierSeq) return undefined;   // Ranks changed while this loaded: the newer request paints, not this one
+        if (r && r.ok) { S.tier = Object.assign({}, r.data, { fetchedAt: r.fetchedAt, stale: r.stale }); S.tierErr = r.error || null; buildMaps(); forget('tier-' + S.bracket, r); }
         else if (!S.tier) S.tierErr = (r && r.error) || 'Could not load the Arena tier list';
         else S.tierErr = (r && r.error) || null;
+        return r;
     }
     async function loadAugMeta() {
         if (S.augMeta) return;
@@ -67,15 +78,17 @@
         if (r && r.ok && r.data) { S.augMeta = r.data; renderBuild(); }   // icons only: the view works without them
     }
     const bkey = (cid, b = S.bracket) => cid + '|' + b;
-    async function loadBuild(cid, force, quiet) {
-        const e = entry(cid); if (!e) return;
-        const k = bkey(cid);
+    async function loadBuild(cid, force, quiet) {   // -> what main answered for the build page
+        const e = entry(cid); if (!e) return null;
+        const k = bkey(cid), b = S.bracket;
         S.build[k] = Object.assign(S.build[k] || {}, { loading: true });
         if (!quiet) renderBuild();
-        const r = await api.invoke('arena:champion', { slug: e.slug, tier: S.bracket, force: !!force }).catch(err => ({ ok: false, error: err.message }));
+        const r = await api.invoke('arena:champion', { slug: e.slug, tier: b, force: !!force }).catch(err => ({ ok: false, error: err.message }));
         S.build[k] = { loading: false, r };
+        forget(`champ-${e.slug}-${b}`, r);
         if (S.selected === cid) renderBuild();
         renderLeft();   // champion select panel uses partner tables
+        return r;
     }
     function select(cid) {
         S.selected = Number(cid);
@@ -95,10 +108,16 @@
         finally { S.polling = false; }
         const d = S.cs;
         const sig = d ? JSON.stringify([d.connected, d.inChampSelect, d.inGame, d.phase, d.isArena, d.mine, d.mineLocked, d.mates, d.taken, d.banned, d.pickable ? d.pickable.length : -1]) : '';
+        // Really outside champion select: the client answered with another phase. A failed poll (no answer, client not found, or
+        // a champion select session that could not be read) does not count, so one bad poll changes nothing below.
+        const outside = !!(d && d.connected && !d.inChampSelect && d.phase !== 'ChampSelect');
+        // A new champion select opens on the "Champion select" tab again, even if the Tier list tab was chosen before
+        if (d && d.inChampSelect && !S.inCs) S.left = 'auto';
+        if (d && d.inChampSelect) S.inCs = true; else if (outside) S.inCs = false;
         // Follow your own champion: whenever it changes its build opens. Clicking another row overrides that until it changes again.
         const mine = d && d.isArena && (d.inChampSelect || d.inGame) ? d.mine : 0;
         if (mine && mine !== S.autoMine && S.tier) { S.autoMine = mine; select(mine); }
-        else if (!mine) S.autoMine = 0;
+        else if (!mine && outside) S.autoMine = 0;
         if (sig !== S.csSig) {
             S.csSig = sig;
             renderTop(); renderLeft();
@@ -168,10 +187,12 @@
         else if (!d.inChampSelect) status = `<span class="arena-dot off"></span>Not in champion select (${esc(d.phase || 'idle')}).`;
         else if (!d.isArena) status = `<span class="arena-dot warn"></span>In champion select, but the queue is <b>${esc(d.queueName || 'not Arena')}</b>: Arena picks are shown for reference only.`;
         else status = `<span class="arena-dot on"></span>Arena champion select${d.mine ? '' : ': pick a champion'}.`;
+        // LoLalytics' "analysed" counts champion picks (one per player, so about 18 per 3x6 lobby), not games: it is shown as picks
+        const tierFail = S.tierErr || (t && t.stale && failedRefresh.get('tier-' + S.bracket));
         const meta = t ? `${chip('arena-tier', { title: 'Arena tier list', source: 'LoLalytics', url: t.url || 'https://lolalytics.com/lol/tierlist/arena/', rank: bracketLabel(t.bracket), period: `Patch ${t.patch || '?'}`,
-                games: t.analysed || null, fetchedAt: t.fetchedAt, stale: !!t.stale, rows: [['Champions', String(t.champions.length)], ['Average top-half rate', fmt1(t.avgWr) + '%']],
-                note: 'Fetched when this view opens; cached on this PC for about 6 hours and refreshed in the background.', onRefresh: async () => { await reload(); return { message: 'Tier list fetched again.' }; } })}
-                ${DD.help ? DD.help('arena') : ''}${t.stale ? ' &middot; <span class="arena-stale">refreshing</span>' : ''}` : '';
+                fetchedAt: t.fetchedAt, stale: !!t.stale, rows: [['Champions', String(t.champions.length)], ...(t.analysed ? [['Champion picks counted', fmtInt(t.analysed)]] : []), ['Average top-half rate', fmt1(t.avgWr) + '%']],
+                note: 'Fetched when this view opens; cached on this PC for about 6 hours and refreshed in the background.', onRefresh: async () => refreshMsg(await reload()) })}
+                ${DD.help ? DD.help('arena') : ''}${tierFail ? ` &middot; <span class="arena-stale">saved copy &middot; could not refresh: ${esc(tierFail)}</span>` : t.stale ? ' &middot; <span class="arena-stale">refreshing</span>' : ''}` : '';
         el.innerHTML = `<div class="arena-status">${status}</div><div class="arena-meta">${meta}
             <label class="arena-rank" title="Which players' games the numbers come from">Ranks <select data-act="bracket"><option value="all"${S.bracket === 'all' ? ' selected' : ''}>All ranks</option><option value="emerald_plus"${S.bracket === 'emerald_plus' ? ' selected' : ''}>Emerald+</option></select></label>
             <a href="https://lolalytics.com/lol/tierlist/arena/" target="_blank" rel="noopener" class="arena-link">lolalytics.com</a>
@@ -328,7 +349,7 @@
         if (!cid) { el.innerHTML = '<div class="arena-empty big">Select a champion on the left to see its placements, augments and items.</div>'; return; }
         const e = entry(cid), b = S.build[bkey(cid)];
         const head = `<div class="arena-bhead">${icon(cid, 'lg')}<div><h2>${esc(champName(cid))}</h2>
-            <div class="arena-sub">${e ? `<span class="arena-tier ${tierCls(e.tier)}">${esc(e.tier || '')}</span> Top-half rate <b>${fmt1(e.wr)}%</b> &middot; rank #${e.rank} of ${S.tier.champions.length} &middot; ${bracketLabel(S.bracket)}` : 'No Arena statistics for this champion.'}</div></div></div>`;
+            <div class="arena-sub">${e ? `<span class="arena-tier ${tierCls(e.tier)}">${esc(e.tier || '')}</span> Top-half rate <b>${fmt1(e.wr)}%</b> &middot; rank #${e.rank} of ${S.tier ? S.tier.champions.length : S.byCid.size} &middot; ${bracketLabel(S.bracket)}` : 'No Arena statistics for this champion.'}</div></div></div>`;
         if (!e) { el.innerHTML = head; return; }
         if (!b || b.loading) { el.innerHTML = head + '<div class="arena-empty">Loading build...</div>'; return; }
         const r = b.r, c = r && r.ok ? r.data : null;
@@ -337,11 +358,13 @@
         let html = head;
         html += `<div class="dg-prov-row">${chip('arena-build', { title: 'Arena build', source: 'LoLalytics', url: c.url || `https://lolalytics.com/lol/${c.slug}/arena/build/`, rank: bracketLabel(S.bracket), period: `Patch ${c.patch || '?'}`,
             games: h.games, fetchedAt: r.fetchedAt, stale: !!r.stale, rows: [['Champion', c.name], ['Pick rate', fmt1(h.pick) + '%'], ['Ban rate', fmt1(h.ban) + '%']],
-            note: 'Fetched when the champion is opened; cached on this PC for about 6 hours.', onRefresh: async () => { await loadBuild(cid, true); return { message: 'Fetched again.' }; } })}</div>`;
+            note: 'Fetched when the champion is opened; cached on this PC for about 6 hours.', onRefresh: async () => refreshMsg(await loadBuild(cid, true)) })}</div>`;
         html += placementsHtml(c);
-        html += `<div class="arena-statline">Top-half rate <b>${fmt1(h.wr)}%</b> (finishing ${c.winPlaces === 1 ? '1st' : '1st to ' + ord(c.winPlaces)} of ${c.places.length}; average of all champions ${fmt1(c.avgWr)}%) &middot; average finish ${c.avgPlace == null ? '-' : fmt2(c.avgPlace)} &middot; picked in ${fmt1(h.pick)}% of games, banned in ${fmt1(h.ban)}% &middot; ${fmtInt(h.games)} games &middot; patch ${esc(c.patch || '?')}</div>`;
+        // LoLalytics' pick and ban rates are scaled so all champions add up to 1000%, not "% of games": shown as LoLalytics' own rates
+        html += `<div class="arena-statline">Top-half rate <b>${fmt1(h.wr)}%</b> (finishing ${c.winPlaces === 1 ? '1st' : '1st to ' + ord(c.winPlaces)} of ${c.places.length}; average of all champions ${fmt1(c.avgWr)}%) &middot; average finish ${c.avgPlace == null ? '-' : fmt2(c.avgPlace)} &middot; pick rate ${fmt1(h.pick)}%, ban rate ${fmt1(h.ban)}% &middot; ${fmtInt(h.games)} games &middot; patch ${esc(c.patch || '?')}</div>`;
         html += augmentsHtml(c) + itemsHtml(c) + partnersHtml(c);
-        html += `<div class="arena-foot">Source: <a class="arena-link" target="_blank" rel="noopener" href="${esc(c.url || '')}">lolalytics.com Arena build</a>${S.augMeta ? ' &middot; augment icons from CommunityDragon' : ''} &middot; fetched ${ageText(r.fetchedAt)}${r.stale ? ' (refreshing in background)' : ''}</div>`;
+        const refreshErr = r.stale && (r.error || failedRefresh.get(`champ-${e.slug}-${S.bracket}`));
+        html += `<div class="arena-foot">Source: <a class="arena-link" target="_blank" rel="noopener" href="${esc(c.url || '')}">lolalytics.com Arena build</a>${S.augMeta ? ' &middot; augment icons from CommunityDragon' : ''} &middot; fetched ${ageText(r.fetchedAt)}${refreshErr ? ` (saved copy; could not refresh: ${esc(refreshErr)})` : r.stale ? ' (refreshing in background)' : ''}</div>`;
         el.innerHTML = html;
     }
 
@@ -355,9 +378,10 @@
         S.tier = null; S.tierErr = null; renderTop(); renderLeft(); renderBuild();
         loadTier(false).then(() => { renderTop(); renderLeft(); if (S.selected) select(S.selected); });
     }
-    async function reload() {
-        await loadTier(true); renderTop(); renderLeft();
+    async function reload() {   // -> the tier list answer (for the chip's message)
+        const r = await loadTier(true); renderTop(); renderLeft();
         if (S.selected) loadBuild(S.selected, true);
+        return r;
     }
     function onLeftClick(ev) {
         if (ev.target.closest('[data-act="reload"]')) { reload(); return; }
@@ -386,10 +410,17 @@
     });
 
     // ---- lifecycle ---------------------------------------------------------------------------------------------------------------------
-    api.on('arena:updated', ev => {   // a background refresh finished: swap in the new data
+    api.on('arena:updated', ev => {   // a background refresh finished: swap in the new data, or say it failed (the saved copy stays)
         if (!ev) return;
-        if (ev.kind === 'tier-list') loadTier(false).then(() => { renderTop(); renderLeft(); });
-        else if (ev.kind === 'champion' && S.selected) { const e = entry(S.selected); if (e && String(ev.key || '').includes(e.slug)) loadBuild(S.selected, false); }
+        const key = String(ev.key || '');
+        if (ev.error) failedRefresh.set(key, ev.error); else failedRefresh.delete(key);
+        if (ev.kind === 'tier-list') { if (ev.error) renderTop(); else loadTier(false).then(() => { renderTop(); renderLeft(); }); return; }
+        const m = ev.kind === 'champion' && /^champ-(.+)-(all|emerald_plus)$/.exec(key);
+        const e = m && S.bySlug.get(m[1]);
+        if (!e) return;
+        if (e.cid === S.selected && m[2] === S.bracket) { if (ev.error) renderBuild(); else loadBuild(S.selected, false); return; }
+        const b = S.build[bkey(e.cid, m[2])];
+        if (!ev.error && b && !b.loading) delete S.build[bkey(e.cid, m[2])];   // not shown: asked again when it is (fresh from the cache)
     });
 
     async function activate() {

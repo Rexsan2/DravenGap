@@ -41,7 +41,7 @@
 
     const S = {
         ready: false, active: false, tier: null, tierErr: null, ddByNorm: new Map(), ddById: new Map(), bySlug: new Map(),
-        cs: null, csSig: '', autoMine: 0, manual: new Map(), selected: null, view: 'auto', search: '', rarity: 'prismatic',
+        cs: null, csSig: '', inCs: false, autoMine: 0, manual: new Map(), selected: null, view: 'auto', search: '', rarity: 'prismatic',
         build: {}, items: {}, itemMeta: null, spellMeta: null, timer: null, polling: false, lastErr: ''
     };
 
@@ -75,14 +75,15 @@
     let latestItems = null, versionsPromise = null, oldBusy = false;
     const oldVersionItems = new Map();
     async function ddJson(url) { try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch (e) { return null; } }
+    // Asked with every build opened. A failed item.json / summoner.json is tried again then (until it loads, items show the CDN
+    // icon by id), and items that could not be named ('#id', e.g. Data Dragon was unreachable) are looked up again too.
     async function loadStatic() {
-        if (S.itemMeta) return;
+        for (const [k, c] of itemCache) if (!c.img) itemCache.delete(k);
+        if (S.itemMeta && S.spellMeta) return;
         const v = DD.getLatestPatch();
-        const [it, sp] = await Promise.all([ddJson(`${DD.ddragonBase}/cdn/${v}/data/en_US/item.json`), ddJson(`${DD.ddragonBase}/cdn/${v}/data/en_US/summoner.json`)]);
-        latestItems = (it && it.data) || {};
-        S.itemMeta = true;
-        S.spellMeta = {};
-        if (sp && sp.data) for (const s of Object.values(sp.data)) S.spellMeta[s.key] = { name: s.name, file: s.image && s.image.full };
+        const [it, sp] = await Promise.all([S.itemMeta ? null : ddJson(`${DD.ddragonBase}/cdn/${v}/data/en_US/item.json`), S.spellMeta ? null : ddJson(`${DD.ddragonBase}/cdn/${v}/data/en_US/summoner.json`)]);
+        if (it && it.data) { latestItems = it.data; S.itemMeta = true; }
+        if (sp && sp.data) { S.spellMeta = {}; for (const s of Object.values(sp.data)) S.spellMeta[s.key] = { name: s.name, file: s.image && s.image.full }; }
     }
     function item(id) {
         const key = String(id);
@@ -98,7 +99,9 @@
         oldBusy = true;
         try {
             if (!versionsPromise) versionsPromise = ddJson(`${DD.ddragonBase}/api/versions.json`);
-            const versions = ((await versionsPromise) || []).filter(v => /^\d+\.\d+\.\d+$/.test(v)).slice(1, 60);
+            const list = await versionsPromise;
+            if (!list) versionsPromise = null;   // failed: asked again next time instead of never
+            const versions = (list || []).filter(v => /^\d+\.\d+\.\d+$/.test(v)).slice(1, 60);
             for (const v of versions) {
                 if (!pendingOld.size) break;
                 let items = oldVersionItems.get(v);
@@ -118,13 +121,22 @@
     };
 
     // ---- data loading ---------------------------------------------------------------------------------------------------
+    // Cache key (as aram-main names it) -> error of its last failed background refresh ('aram:updated' with an error): the view
+    // then says "saved copy, could not refresh" instead of "refreshing". Cleared by a successful refresh or a fresh answer.
+    const failedRefresh = new Map();
+    const itemsKey = slug => `items-${slug}-all`;
+    const forget = (key, r) => { if (r && r.ok && !r.stale) failedRefresh.delete(key); };
+    // A chip's "Refresh now" message from what main answered (a failed fetch with a saved copy is { ok:true, stale:true, error })
+    const refreshMsg = r => ({ message: r && r.error ? `Could not refresh: ${r.error}${r.ok ? ' (showing the saved copy)' : ''}` : 'Fetched again.' });
     async function loadTier(force) {
         const r = await api.invoke('aram:tier-list', { force: !!force }).catch(e => ({ ok: false, error: e.message }));
-        if (r && r.ok) { S.tier = Object.assign({}, r.data, { fetchedAt: r.fetchedAt, stale: r.stale }); S.tierErr = r.error || null; buildMaps(); }
+        if (r && r.ok) { S.tier = Object.assign({}, r.data, { fetchedAt: r.fetchedAt, stale: r.stale }); S.tierErr = r.error || null; buildMaps(); forget('tier-list', r); }
         else S.tierErr = (r && r.error) || 'Could not load the tier list';
+        return r;
     }
+    // -> { champ, items }: what main answered for the augments page and the LoLalytics items
     async function loadBuild(slug, force) {
-        if (!slug) return;
+        if (!slug) return null;
         S.build[slug] = Object.assign(S.build[slug] || {}, { loading: true });
         renderBuild();
         const [c, i] = await Promise.all([
@@ -133,13 +145,27 @@
             loadStatic()
         ]);
         S.build[slug] = { loading: false, champ: c, items: i };
+        forget('champion-' + slug, c); forget(itemsKey(slug), i);
+        if (S.selected === slug) renderBuild();
+        return { champ: c, items: i };
+    }
+    // Only the LoLalytics items again (their Retry button, or re-selecting a champion whose items failed); force skips the cache
+    async function loadItems(slug, force) {
+        const b = S.build[slug];
+        if (!b || b.loading) return;
+        b.items = { loading: true };
+        if (S.selected === slug) renderBuild();
+        const [i] = await Promise.all([api.invoke('aram:items', { slug, tier: 'all', force: !!force }).catch(e => ({ ok: false, error: e.message })), loadStatic()]);
+        if (S.build[slug] !== b) return;   // a full reload replaced this entry meanwhile
+        b.items = i; forget(itemsKey(slug), i);
         if (S.selected === slug) renderBuild();
     }
     function select(slug) {
         S.selected = slug;
         renderLeft();
         const b = S.build[slug];
-        if (!b || (!b.loading && !(b.champ && b.champ.ok))) loadBuild(slug); else renderBuild();
+        if (!b || (!b.loading && !(b.champ && b.champ.ok))) { loadBuild(slug); return; }
+        if (!b.loading && !(b.items && (b.items.ok || b.items.loading))) loadItems(slug, false); else renderBuild();
     }
 
     // ---- champ select polling -------------------------------------------------------------------------------------------
@@ -153,6 +179,13 @@
         finally { S.polling = false; }
         const d = S.cs;
         const sig = d ? JSON.stringify([d.connected, d.inChampSelect, d.inGame, d.phase, d.isMayhem, d.isAram, d.mine, d.bench, d.team, d.rerolls]) : '';
+        // Really outside champion select: the client answered with another phase. A failed poll (no answer, client not found, or
+        // a champion select session that could not be read) does not count, so one bad poll changes nothing below.
+        const outside = !!(d && d.connected && !d.inChampSelect && d.phase !== 'ChampSelect');
+        // A new champion select: champions added by hand and the tab choice belonged to the previous one, so the list starts again
+        // from what the client reports, on "Recommended picks"
+        if (d && d.inChampSelect && !S.inCs) { S.manual.clear(); if (S.view !== 'auto') { S.view = 'auto'; S.search = ''; } }
+        if (d && d.inChampSelect) S.inCs = true; else if (outside) S.inCs = false;
         // Follow your own champion: whenever it changes (first pick, reroll, bench swap) its build opens automatically.
         // Clicking another row overrides this until your champion changes again. Checked every poll, not only on a change,
         // because the tier list (needed to map the champion) may still be loading when your champion first appears.
@@ -160,7 +193,7 @@
         if (mine && mine !== S.autoMine) {
             const e = entryByKey(mine);
             if (e) { S.autoMine = mine; select(e.slug); }
-        } else if (!mine) S.autoMine = 0;
+        } else if (!mine && outside) S.autoMine = 0;
         if (sig !== S.csSig) {
             S.csSig = sig;
             renderTop(); renderLeft();
@@ -208,10 +241,14 @@
             </div></div>`;
         root.querySelector('#aram-left').addEventListener('click', onLeftClick);
         root.querySelector('#aram-left').addEventListener('input', onLeftInput);
+        root.querySelector('#aram-left').addEventListener('change', onLeftCommit);
+        root.querySelector('#aram-left').addEventListener('keydown', onLeftCommit);
         root.querySelector('#aram-right').addEventListener('click', onRightClick);
         root.querySelector('#aram-top').addEventListener('click', onTopClick);
     }
 
+    // After the tier chip: "refreshing" while a background refresh runs, or the saved copy's failed refresh (then nothing is running)
+    const staleNote = (stale, err) => (err ? ` &middot; <span class="aram-stale">saved copy &middot; could not refresh: ${esc(err)}</span>` : stale ? ' &middot; <span class="aram-stale">refreshing</span>' : '');
     function renderTop() {
         const el = root.querySelector('#aram-top'); if (!el) return;
         const d = S.cs, t = S.tier;
@@ -223,14 +260,15 @@
         else status = `<span class="aram-dot on"></span>ARAM: Mayhem champion select${d.rerolls != null ? ` &middot; rerolls left: <b>${d.rerolls}</b>` : ''}.`;
         const meta = t ? `${chip('aram-tier', { title: 'ARAM Mayhem tier list', source: 'arammayhem.com', url: 'https://arammayhem.com/tier-list/', period: `Patch ${t.patch || '?'}`,
                 updatedAt: t.dataDate || null, fetchedAt: t.fetchedAt, stale: !!t.stale, rows: [['Champions', String(t.champions.length)], ['Average WR', fmt1(t.avgWr) + '%']],
-                note: 'Cached on this PC for about 6 hours and refreshed in the background.', onRefresh: async () => { await reload(); return { message: 'Tier list fetched again.' }; } })}
-                ${DD.help ? DD.help('aram') : ''}${t.stale ? ' &middot; <span class="aram-stale">refreshing</span>' : ''}` : '';
+                note: 'Cached on this PC for about 6 hours and refreshed in the background.', onRefresh: async () => refreshMsg(await reload()) })}
+                ${DD.help ? DD.help('aram') : ''}${staleNote(t.stale, S.tierErr || (t.stale && failedRefresh.get('tier-list')))}` : '';
         el.innerHTML = `<div class="aram-status">${status}</div><div class="aram-meta">${meta}
             <a href="https://arammayhem.com/tier-list/" target="_blank" rel="noopener" class="aram-link">arammayhem.com</a>
             <button class="aram-btn" data-act="reload" title="Re-fetch the tier list and the selected champion">Refresh</button></div>`;
     }
 
-    function rowHtml(e, sources, selected) {
+    // addable: the Full tier list shows "+" on champions not in Recommended picks yet (adds them by hand)
+    function rowHtml(e, sources, selected, addable) {
         const avg = S.tier ? S.tier.avgWr : 50;
         const d = e.wr - avg;
         const tags = sources ? [...sources].map(s => `<span class="aram-src ${s}">${s}</span>`).join('') : '';
@@ -240,7 +278,8 @@
             <span class="aram-tier t-${esc((e.tier || '').replace('+', 'p').toLowerCase())}">${esc(e.tier || '')}</span>
             <span class="aram-wr">${fmt2(e.wr)}%</span>
             <span class="aram-delta ${deltaCls(d)}">${signed(d)}</span>
-            ${sources && sources.has('manual') ? `<button class="aram-x" data-rm="${e.ddKey}" title="Remove">&times;</button>` : ''}
+            ${sources && sources.has('manual') ? `<button class="aram-x" data-rm="${e.ddKey}" title="Remove">&times;</button>`
+                : addable && e.ddKey ? `<button class="aram-x aram-add" data-add="${e.ddKey}" title="Add to Recommended picks (a champion you have)">+</button>` : ''}
         </div>`;
     }
 
@@ -266,10 +305,9 @@
             const list = S.tier.champions.filter(e => !q || norm(e.name).includes(q) || norm(e.slug).includes(q) || norm(e.search).includes(q));
             body = list.map(e => {
                 const a = avail.find(x => x.entry === e);
-                return rowHtml(e, a ? a.sources : null, e.slug === S.selected);
+                return rowHtml(e, a ? a.sources : null, e.slug === S.selected, !a);
             }).join('') || '<div class="aram-empty">No champion matches.</div>';
         }
-        const addable = mode === 'avail' ? '' : '';
         el.innerHTML = rerollAdviceHtml() + `<div class="aram-tabs">
                 <button class="aram-tab${mode === 'avail' ? ' on' : ''}" data-aview="avail">Recommended picks (${avail.length})</button>
                 <button class="aram-tab${mode === 'all' ? ' on' : ''}" data-aview="all">Full tier list</button>
@@ -277,7 +315,7 @@
             <div class="aram-listhead"><span>${mode === 'avail' ? 'Available to you, best Mayhem win rate first' : 'All champions by Mayhem win rate'}</span><span class="h-tier">Tier</span><span class="h-wr">WR</span><span class="h-d">vs avg</span></div>
             ${mode === 'all' ? `<input id="aram-search" class="aram-search" type="search" placeholder="Search champion (search to also add it by hand with +)" value="${esc(S.search)}">` : ''}
             ${mode === 'avail' ? `<input id="aram-search" class="aram-search" type="search" placeholder="Add a champion by hand..." value="${esc(S.search)}" list="aram-dl">${datalist()}` : ''}
-            <div class="aram-list">${body}</div>${addable}`;
+            <div class="aram-list">${body}</div>`;
         if (mode === 'avail' && S.search) { /* suggestions are in the datalist */ }
         if (keepFocus) { const i = el.querySelector('#aram-search'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) { /* type=search */ } } }
     }
@@ -301,19 +339,20 @@
         const better = wrs.filter(w => w > mine.wr).length / wrs.length;
         const bench = (d.bench || []).map(entryByKey).filter(e => e && e.wr != null).sort((a, b) => b.wr - a.wr)[0];
         const rerolls = d.rerolls;
+        // one rule before and after the bench opens: a reroll is worth it when your champion is half a point or more below an average reroll
+        const below = mine.wr < avg - 0.5;
         let verdict, cls;
-        if (!(d.bench && d.bench.length)) {   // the bench has not opened yet: only your own champion against the tier list
-            const sorted = [...wrs].sort((a, b) => a - b), mid = sorted.length >> 1;
-            const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-            if (mine.wr >= median) { verdict = `Bench opens soon: keep <b>${esc(mine.name)}</b>, it is above the middle of the tier list`; cls = 'ok'; }
-            else if (rerolls === 0) { verdict = `Bench opens soon: ${esc(mine.name)} is below the middle of the tier list, but no rerolls are left`; cls = 'warn'; }
+        if (!(d.bench && d.bench.length)) {   // the bench has not opened yet: only your own champion against an average reroll
+            if (!below) { verdict = `Bench opens soon: keep <b>${esc(mine.name)}</b>, only ${Math.round(better * 100)}% of rerolls would be better`; cls = 'ok'; }
+            else if (rerolls === 0) { verdict = `Bench opens soon: ${esc(mine.name)} is below an average reroll, but no rerolls are left`; cls = 'warn'; }
             else { verdict = `Bench opens soon: a reroll is worth it, ${Math.round(better * 100)}% of champions have a higher win rate than ${esc(mine.name)}${rerolls == null ? ' (rerolls left unknown)' : ''}`; cls = 'go'; }
             return { cls, text: verdict.replace(/<[^>]+>/g, ''), html: `<div class="aram-advice ${cls}"><div class="aram-advice-main">${verdict}</div>
-                <div class="aram-advice-sub">${esc(mine.name)} ${fmt2(mine.wr)}% · tier list middle ${fmt2(median)}% · average reroll ${fmt2(avg)}%${rerolls != null ? ` · rerolls left: ${rerolls}` : ''}</div></div>` };
+                <div class="aram-advice-sub">${esc(mine.name)} ${fmt2(mine.wr)}% · average reroll ${fmt2(avg)}%${rerolls != null ? ` · rerolls left: ${rerolls}` : ''}</div></div>` };
         }
         if (bench && bench.wr - mine.wr >= 1) { verdict = `Swap to <b>${esc(bench.name)}</b> from the bench (${signed(bench.wr - mine.wr)})`; cls = 'go'; }
-        else if (mine.wr < avg - 0.5 && rerolls) { verdict = `Reroll: ${Math.round(better * 100)}% of rerolls give a higher win rate`; cls = 'go'; }
-        else if (mine.wr < avg - 0.5) { verdict = `Below an average reroll, but no rerolls left${bench ? ' and nothing better on the bench' : ''}`; cls = 'warn'; }
+        else if (below && rerolls) { verdict = `Reroll: ${Math.round(better * 100)}% of rerolls give a higher win rate`; cls = 'go'; }
+        else if (below && rerolls == null) { verdict = `Reroll if you have one: ${Math.round(better * 100)}% of rerolls give a higher win rate (rerolls left unknown)`; cls = 'go'; }
+        else if (below) { verdict = `Below an average reroll, but no rerolls left${bench ? ' and nothing better on the bench' : ''}`; cls = 'warn'; }
         else { verdict = `Keep ${esc(mine.name)}: only ${Math.round(better * 100)}% of rerolls would be better`; cls = 'ok'; }
         return { cls, text: verdict.replace(/<[^>]+>/g, ''), html: `<div class="aram-advice ${cls}"><div class="aram-advice-main">${verdict}</div>
             <div class="aram-advice-sub">${esc(mine.name)} ${fmt2(mine.wr)}% · average reroll ${fmt2(avg)}%${bench ? ` · best bench ${esc(bench.name)} ${fmt2(bench.wr)}%` : ''}${rerolls != null ? ` · rerolls left: ${rerolls}` : ''}</div></div>` };
@@ -337,13 +376,16 @@
         const b = ev.target.closest('[data-act="reload"]');
         if (b) reload();
     }
-    async function reload() {
-        await loadTier(true); renderTop(); renderLeft();
+    async function reload() {   // -> the tier list answer (for the chip's message)
+        const r = await loadTier(true); renderTop(); renderLeft();
         if (S.selected) loadBuild(S.selected, true);
+        return r;
     }
     function onLeftClick(ev) {
         const rm = ev.target.closest('[data-rm]');
         if (rm) { S.manual.delete(Number(rm.dataset.rm)); renderLeft(); return; }
+        const add = ev.target.closest('[data-add]');   // "+" on the Full tier list: stay on the list to add more
+        if (add) { S.manual.set(Number(add.dataset.add), true); if (S.view === 'auto') S.view = 'all'; renderLeft(); return; }
         const tab = ev.target.closest("[data-aview]");
         if (tab) { S.view = tab.dataset.aview; S.search = ''; renderLeft(); return; }
         if (ev.target.closest('[data-act="reload"]')) { reload(); return; }
@@ -354,12 +396,24 @@
         if (ev.target.id !== 'aram-search') return;
         const v = ev.target.value;
         const mode = S.view === 'auto' ? (available().length ? 'avail' : 'all') : S.view;
-        if (mode === 'avail') {   // datalist pick (exact name) adds the champion by hand
-            const e = S.tier && S.tier.champions.find(x => x.name.toLowerCase() === v.trim().toLowerCase() && x.ddKey);
-            if (e) { S.manual.set(e.ddKey, true); S.search = ''; S.view = 'avail'; renderLeft(); select(e.slug); return; }
+        if (mode === 'avail') {   // a datalist pick or a paste (exact name) adds the champion by hand; typed letters only search
+            const t = ev.inputType || '';
+            if ((t === 'insertReplacementText' || t === 'insertFromPaste') && addByHand(v)) return;
             S.search = v; return;
         }
         S.search = v; renderLeft();
+    }
+    // "Add a champion by hand" commits on Enter or when leaving the box (typing "Vi" on the way to "Viego" no longer adds Vi)
+    function onLeftCommit(ev) {
+        if (ev.target.id !== 'aram-search' || (ev.type === 'keydown' && ev.key !== 'Enter')) return;
+        const mode = S.view === 'auto' ? (available().length ? 'avail' : 'all') : S.view;
+        if (mode === 'avail') addByHand(ev.target.value);
+    }
+    function addByHand(text) {
+        const e = S.tier && S.tier.champions.find(x => x.name.toLowerCase() === String(text || '').trim().toLowerCase() && x.ddKey);
+        if (!e) return false;
+        S.manual.set(e.ddKey, true); S.search = ''; S.view = 'avail'; renderLeft(); select(e.slug);
+        return true;
     }
 
     // data-source chip (glossary.js); empty if that script is missing
@@ -398,7 +452,7 @@
             const base = c.meta.wr != null ? c.meta.wr : (e && e.wr);
             html += `<div class="dg-prov-row">${chip('aram-augments', { title: 'Mayhem augments', source: 'arammayhem.com', url: `https://arammayhem.com/build/${slug}/`, period: `Patch ${c.meta.patch || '?'}`,
                 updatedAt: c.meta.dataDate || null, fetchedAt: b.champ.fetchedAt, stale: !!st, rows: [['Champion', e ? e.name : slug], ['Pick rate', fmt2(c.meta.pick) + '%']],
-                note: 'Fetched when the champion is opened; cached on this PC for about 6 hours.', onRefresh: async () => { await loadBuild(slug, true); return { message: 'Fetched again.' }; } })}</div>`;
+                note: 'Fetched when the champion is opened; cached on this PC for about 6 hours.', onRefresh: async () => refreshMsg(((await loadBuild(slug, true)) || {}).champ) })}</div>`;
             html += `<div class="aram-statline">Champion WR <b>${fmt2(c.meta.wr)}%</b> &middot; pick rate ${fmt2(c.meta.pick)}% &middot; ${esc(c.meta.tier || '')} #${c.meta.rank || '?'} &middot; patch ${esc(c.meta.patch || '?')} &middot; data ${esc(c.meta.dataDate || '?')}
                 ${c.balance.length ? ` &middot; Mayhem balance: ${c.balance.map(x => `<span class="aram-bal">${esc(x.dir)} ${esc(x.label)} ${esc(x.value)}</span>`).join(' ')}` : ''}</div>`;
             // augments
@@ -411,7 +465,8 @@
         // Items: LoLalytics (regular ARAM) only
         const li = b.items && b.items.ok ? b.items.data : null;
         html += `<h3>Items &mdash; LoLalytics ARAM win rates <span class="aram-hint">(all ARAM, last 30 days, all ranks) &middot; sorted by win rate; dimmed = few games</span></h3>`;
-        if (!li) html += `<div class="aram-empty small">LoLalytics build not available: ${esc((b.items && b.items.error) || 'unknown error')}</div>`;
+        if (b.items && b.items.loading) html += '<div class="aram-empty small">Loading the LoLalytics build...</div>';
+        else if (!li) html += `<div class="aram-empty small">LoLalytics build not available: ${esc((b.items && b.items.error) || 'unknown error')} <button class="aram-btn" data-act="retry-items">Retry</button></div>`;
         else {
             const gam = g => `<span class="aram-games">${fmtInt(g)} games</span>`;
             const lowGames = Math.max(LOW_GAMES_MIN, (li.games || 0) * LOW_GAMES_FRAC);
@@ -421,7 +476,7 @@
             }).join('');
             html += `<div class="dg-prov-row">${chip('aram-items', { title: 'ARAM items', short: 'LoLalytics ARAM', source: 'LoLalytics (regular ARAM)', url: li.url || `https://lolalytics.com/lol/${slug}/aram/build/`, rank: li.tierLabel || 'All ranks',
                 period: 'Last 30 days', games: li.games, fetchedAt: b.items.fetchedAt, stale: !!b.items.stale, note: 'Regular ARAM, not Mayhem: its win rates are not comparable with Mayhem win rates. Cached for about 6 hours.',
-                onRefresh: async () => { await loadBuild(slug, true); return { message: 'Fetched again.' }; } })}</div>`;
+                onRefresh: async () => refreshMsg(((await loadBuild(slug, true)) || {}).items) })}</div>`;
             html += `<div class="aram-statline">Regular ARAM WR <b>${fmt2(li.wr)}%</b> (not comparable with Mayhem WR) &middot; ${fmtInt(li.games)} games &middot; ${esc(li.tier || '')}</div>`;
             html += `<div class="aram-apply"><span class="aram-apply-t">Send to client</span>
                 <button class="aram-btn" data-apply="items" title="Save these items as a 'DravenGap' item set for this champion on Howling Abyss (shown in the in-game shop)">Save item set</button>
@@ -440,9 +495,12 @@
             }
         }
         const fetched = [b.champ && b.champ.fetchedAt, b.items && b.items.fetchedAt].filter(Boolean);
+        // a saved copy whose refresh failed (a forced fetch, or the background refresh) says so; "refreshing" only while one runs
+        const refreshErr = [[b.champ, 'champion-' + slug], [b.items, itemsKey(slug)]].map(([r, k]) => r && r.ok && r.stale && (r.error || failedRefresh.get(k))).find(Boolean);
+        const staleFoot = refreshErr ? ` (saved copy; could not refresh: ${esc(refreshErr)})` : st || (b.items && b.items.stale) ? ' (refreshing in background)' : '';
         html += `<div class="aram-foot">Sources: augments from <a class="aram-link" target="_blank" rel="noopener" href="https://arammayhem.com/build/${esc(slug)}/">arammayhem.com/build/${esc(slug)}</a> &middot; items from
             <a class="aram-link" target="_blank" rel="noopener" href="${esc(li ? li.url : `https://lolalytics.com/lol/${slug}/aram/build/?patch=30&tier=all`)}">lolalytics.com ARAM build</a>
-            ${fetched.length ? ` &middot; fetched ${ageText(Math.min(...fetched))}${st || (b.items && b.items.stale) ? ' (refreshing in background)' : ''}` : ''}</div>`;
+            ${fetched.length ? ` &middot; fetched ${ageText(Math.min(...fetched))}${staleFoot}` : ''}</div>`;
         el.innerHTML = html;
     }
     // Item set from the LoLalytics rows shown below: starting items, boots, the core build, then the best few options per slot
@@ -481,14 +539,22 @@
         if (ap) { applyToClient(ap.dataset.apply); return; }
         const r = ev.target.closest('[data-rarity]');
         if (r) { S.rarity = r.dataset.rarity; renderBuild(); return; }
+        if (ev.target.closest('[data-act="retry-items"]')) { loadItems(S.selected, true); return; }
         if (ev.target.closest('[data-act="retry"]')) loadBuild(S.selected, true);
     }
 
     // ---- lifecycle ------------------------------------------------------------------------------------------------------
-    api.on('aram:updated', ev => {   // a background refresh finished: swap in the new data
+    // the champion of a cache key: 'champion-<slug>' or 'items-<slug>-<tier>'
+    const slugOfKey = key => { const m = /^champion-(.+)$/.exec(key) || /^items-(.+)-(?:all|emerald)$/.exec(key); return m ? m[1] : null; };
+    api.on('aram:updated', ev => {   // a background refresh finished: swap in the new data, or say it failed (the saved copy stays)
         if (!ev) return;
-        if (ev.kind === 'tier-list') loadTier(false).then(() => { renderTop(); renderLeft(); });
-        else if (S.selected && String(ev.key || '').includes(S.selected)) loadBuild(S.selected, false);
+        const key = String(ev.key || '');
+        if (ev.error) failedRefresh.set(key, ev.error); else failedRefresh.delete(key);
+        if (ev.kind === 'tier-list') { if (ev.error) renderTop(); else loadTier(false).then(() => { renderTop(); renderLeft(); }); return; }
+        const slug = slugOfKey(key);
+        if (!slug) return;
+        if (S.selected === slug) { if (ev.error) renderBuild(); else loadBuild(slug, false); }
+        else if (!ev.error && S.build[slug] && !S.build[slug].loading) delete S.build[slug];   // not shown: its next select asks main again
     });
 
     async function activate() {

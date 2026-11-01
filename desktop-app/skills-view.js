@@ -12,6 +12,12 @@
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const known = new Map(), pending = new Map();   // "Champion|ROLE" -> build:skills answer / promise
     const keyOf = (c, r) => `${c}|${r}`;
+    // A failed answer (offline, 429, timeout, main's 60 s per-URL back-off) and a pooled length card with a page missing are kept with
+    // the time they failed: shown as they are, then asked for again on a view after retryMs. Good answers are kept for the session, and
+    // so are failures that can't change by asking again (a bad request, a page layout the parser no longer reads).
+    const S = { retryMs: 60000 };
+    const remember = (k, r, partial) => { known.set(k, r && ((r.ok && !partial) || r.code === 'BAD_REQUEST' || r.code === 'PARSE') ? r : Object.assign({}, r, { _failedAt: Date.now() })); };
+    const usable = k => known.has(k) && !(known.get(k)._failedAt && Date.now() - known.get(k)._failedAt >= S.retryMs);
     const fmt = n => Math.round(n).toLocaleString('en-US');
 
     function lineHtml(r, opts = {}) {
@@ -61,7 +67,7 @@
         return { ...P, key: `len|${P.rank}|${P.pages.join(',')}` };
     }
     function loadLength(champion, role, P, k) {
-        if (known.has(k) || pending.has(k)) return pending.get(k) || Promise.resolve(known.get(k));
+        if (usable(k) || pending.has(k)) return pending.get(k) || Promise.resolve(known.get(k));
         const p = Promise.all(P.pages.map(pg => api.invoke('build:skills', { champion, role, tier: P.rank, ...(pg ? { patch: pg } : {}) }).catch(e => ({ ok: false, error: e.message }))))
             .then(rs => {
                 const got = rs.filter(r => r && r.ok && r.data && r.data.length), missing = P.pages.filter((pg, i) => !got.includes(rs[i]));
@@ -72,18 +78,18 @@
                     return { label: b.label, games: n, wr: n ? w / n * 100 : null };
                 });
                 const what = P.label + (P.adaptive ? ' (its patches pooled)' : '') + (missing.length ? ` · ${missing.join(', ')} not available` : '');
-                return { ok: true, data: { length }, src: `LoLalytics ${P.rankLabel}, ${what}` };
+                return { ok: true, data: { length }, src: `LoLalytics ${P.rankLabel}, ${what}`, partial: missing.length > 0 };
             })
-            .then(r => { known.set(k, r); pending.delete(k); fill(k); return r; });
+            .then(r => { remember(k, r, r && r.partial); pending.delete(k); fill(k); return r; });
         pending.set(k, p);
         return p;
     }
     function fill(k) { for (const el of document.querySelectorAll(`[data-sk="${k}"]`)) el.outerHTML = el.dataset.skKind === 'length' ? lengthHtml(known.get(k)) : lineHtml(known.get(k), { compact: el.dataset.skCompact === '1' }); }
     function load(champion, role) {
         const k = keyOf(champion, role);
-        if (known.has(k) || pending.has(k)) return pending.get(k) || Promise.resolve(known.get(k));
+        if (usable(k) || pending.has(k)) return pending.get(k) || Promise.resolve(known.get(k));
         const p = api.invoke('build:skills', { champion, role }).catch(e => ({ ok: false, error: e.message }))
-            .then(r => { known.set(k, r); pending.delete(k); fill(k); return r; });
+            .then(r => { remember(k, r); pending.delete(k); fill(k); return r; });
         pending.set(k, p);
         return p;
     }
@@ -91,12 +97,12 @@
         if (!champion || !role) return '';
         if (opts.kind === 'length') {
             const P = lengthSel(), k = `${keyOf(champion, role)}|${P.key}`;
-            if (known.has(k)) return lengthHtml(known.get(k));
+            if (usable(k)) return lengthHtml(known.get(k));
             loadLength(champion, role, P, k);
             return `<div class="sk-len sk-muted" data-sk="${esc(k)}" data-sk-kind="length">Reading the win rate by game length (${esc(P.label)}, ${esc(P.rankLabel)})…</div>`;
         }
         const k = keyOf(champion, role);
-        if (known.has(k)) return lineHtml(known.get(k), opts);
+        if (usable(k)) return lineHtml(known.get(k), opts);
         load(champion, role);
         return `<div class="sk-row sk-muted" data-sk="${esc(k)}"${opts.compact ? ' data-sk-compact="1"' : ''}>Skills: reading the most played order…</div>`;
     }
@@ -104,5 +110,5 @@
         const m = /^skills-([a-z0-9]+)-([a-z]+)(-|$)/.exec((ev && ev.key) || '');
         if (m) for (const k of [...known.keys()]) if (k.toLowerCase().startsWith(m[1] + '|')) known.delete(k);
     });
-    DD.skillOrder = { slot, load, lineHtml, lengthHtml, known };
+    DD.skillOrder = { slot, load, lineHtml, lengthHtml, known, retry: S };   // retry.retryMs: settable for tests
 })();

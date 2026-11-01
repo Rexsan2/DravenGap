@@ -29,7 +29,7 @@
 
     const S = {
         replay: {},   // match id -> replay state (replay-main.js)
-        inited: false, acct: null, profile: null, stale: false, group: 'all', matches: [], nextStart: 0, hasMore: false, loadingMatches: false, matchTok: 0,
+        inited: false, acct: null, profile: null, partial: null, stale: false, group: 'all', matches: [], nextStart: 0, hasMore: false, loadingMatches: false, matchTok: 0,
         ledger: null, ledgerGroup: 'all', tab: 'summary', expanded: new Set(), error: null, loadingProfile: false, lastUpdate: 0, cooldownUntil: 0,
         live: null, liveLoading: false, liveBadge: false, livePhase: null, liveBuf: {}, backfill: null, recent: [], queues: {}, token: 0, scout: {}, seasons: null, seasonQ: 'RANKED_SOLO_5x5', seasonAll: false, seasonRec: false,
         mtab: {}, mpick: {}, tl: {}, rv: {}, played: null, liveOpen: new Set(),
@@ -147,8 +147,9 @@
 
 
     // ---------- error presentation ----------
-    function errHtml(e) {
-        if (!e) return '';
+    // [title, text] for an error answer; errHtml draws it as a box with a button (act: what the button does; the Live game tab
+    // checks the game again instead of reloading the whole profile)
+    function errInfo(e) {
         const map = {
             NO_KEY: ['No Riot API key', 'Add your personal Riot API key in Settings to look up players.'],
             KEY_REJECTED: ['Riot API key rejected', 'Personal keys can expire or be revoked. Paste a fresh key in Settings, then use "Test key".'],
@@ -159,10 +160,14 @@
             BAD_REGION: ['Region', e.error || 'Pick a region.'],
             NO_ACCOUNT: ['No account yet', e.error || 'Start the League client, or set your Riot ID in Settings > Default account.']
         };
-        const m = map[e.code] || ['Something went wrong', e.error || 'Unexpected error'];
+        return map[e.code] || ['Something went wrong', e.error || 'Unexpected error'];
+    }
+    function errHtml(e, act = 'retry') {
+        if (!e) return '';
+        const m = errInfo(e);
         let extra = '';
         if (e.code === 'RATE_LIMITED' && e.retryAt) extra = ` <span class="pf-retry" data-retry="${e.retryAt}"></span>`;
-        return `<div class="pf-error pf-error-${esc(e.code || 'x')}"><b>${esc(m[0])}</b><span>${esc(m[1])}${extra}</span><button class="pf-btn" data-act="retry">Retry</button></div>`;
+        return `<div class="pf-error pf-error-${esc(e.code || 'x')}"><b>${esc(m[0])}</b><span>${esc(m[1])}${extra}</span><button class="pf-btn" data-act="${esc(act)}">Retry</button></div>`;
     }
 
     // ---------- layout shell ----------
@@ -206,6 +211,7 @@
         S.acct = acct; S.profile = null; S.matches = []; S.nextStart = 0; S.hasMore = false; S.ledger = null; S.error = null; S.tab = 'summary'; S.seasons = null; S.seasonAll = false; S.seasonRec = false;
         S.expanded = new Set(); S.mtab = {}; S.mpick = {}; S.tl = {}; S.rv = {}; S.played = null; S.live = null; S.group = 'all'; S.ledgerGroup = 'all'; S.loadingProfile = true; S.backfill = null;
         S.ins = null; S.bt = null; S.insLoading = false; S.champFilter = null;
+        S.matchError = null; S.matchNote = null; S.refreshError = null; S.backfillEnd = null; S.replay = {}; S.dirty = false; S.newGame = false; S.partial = null;   // nothing of the previous profile carries over
         S.liveTok++; S.liveWho = 'viewed'; S.liveLoading = false;   // a late live answer for the previous profile is dropped
         S.matchTok++; S.loadingMatches = false; // abandon any match load still running for the previous account
         root.querySelector('#pf-q').value = `${acct.gameName}#${acct.tagLine}`;
@@ -215,7 +221,8 @@
         if (token !== S.token) return;
         S.loadingProfile = false;
         if (!r.ok) { S.error = r; paintBody(); return; }
-        S.profile = r.profile; S.stale = r.stale; S.lastUpdate = Date.now();
+        S.profile = r.profile; S.stale = r.stale; S.lastUpdate = r.profile.updatedAt || Date.now();   // the age of the oldest cached part (0 = one was missing, so fetched now)
+        S.partial = r.partial || null;   // a part that failed while the others loaded ({ league }): "Rank unavailable", not "Unranked"
         S.acct = { gameName: r.profile.gameName, tagLine: r.profile.tagLine, platform: r.profile.platform };
         root.querySelector('#pf-q').value = `${S.acct.gameName}#${S.acct.tagLine}`;
         addRecent(S.acct); noteOwnerIcon();
@@ -236,7 +243,7 @@
         if (mt !== S.matchTok) return;
         S.loadingMatches = false;
         if (token !== S.token || group !== S.group || champ !== S.champFilter) return;
-        if (!r.ok) { S.matchError = r; paintMatches(); return; }
+        if (!r.ok) { S.matchError = r; paintMatches(); if (!S.ledger) loadLedger(token); return; }   // the season card and teammates come from the cache: still shown
         if (r.puuid && r.puuid !== S.profile.puuid) S.profile.puuid = r.puuid; // the id was re-resolved (API key changed)
         S.matchError = r.warning || null;
         S.matchNote = r.note || null;
@@ -251,7 +258,7 @@
         const r = await api.invoke('profile:ledger', { puuid: S.profile.puuid }).catch(() => null);
         if (token !== S.token || !r || !r.ok) return;
         S.ledger = r; paintLeft();
-        if (S.tab === 'insights' && S.profile.isOwner && !(document.activeElement && document.activeElement.classList.contains('pf-goal-in'))) paintInsights();   // the goals card reads the ledger
+        if (S.tab === 'insights' && onOwnProfile() && !(document.activeElement && document.activeElement.classList.contains('pf-goal-in'))) paintInsights();   // the goals card reads the ledger
         if (root.querySelector('#pf-right .pf-postgame')) paintMatches(); // the post-game card compares with the season averages
         loadPlayed(token);
     }
@@ -276,7 +283,7 @@
         who = onOwnProfile() || !S.profile ? 'me' : (who || S.liveWho || 'viewed');
         S.liveWho = who;
         const key = liveKey(who), tok = ++S.liveTok, have = S.liveBy[key];
-        S.liveLoading = true; S.live = have && !force ? have : null; paintLiveTab();
+        S.liveLoading = true; S.live = have && !force && !have.ended ? have : null; paintLiveTab();   // a game that has ended is not shown again while checking
         const viewed = S.profile ? { gameName: S.profile.gameName, tagLine: S.profile.tagLine, platform: S.profile.platform } : null;
         const args = who === 'me' && !onOwnProfile() ? {} : (viewed || {});
         args.champs = (window.DD.getChampions() || []).map(c => [Number(c.key), String(c.name), String(c.id || c.name)]).filter(x => Number.isInteger(x[0]));
@@ -317,8 +324,8 @@
         S.insLoading = true; if (force) { S.ins = null; S.bt = null; } paintInsights();
         const r = await api.invoke('profile:insights', { puuid, group, champId: champ }).catch(e => ({ ok: false, error: e.message }));
         S.insLoading = false;
-        if (token !== S.token || group !== S.insGroup) return;
-        if (champ !== S.champFilter) { loadInsights(); return; }   // the filter changed while this was computed
+        if (token !== S.token) return;
+        if (group !== S.insGroup || champ !== S.champFilter) { loadInsights(); return; }   // the queue or the filter changed while this was computed (that load was dropped above)
         S.ins = r && r.ok ? r : { error: (r && r.error) || 'Could not compute insights.' };
         paintInsights();
         if (S.ins.draft && S.ins.draft.length && window.DD.draftWinChances) runBacktest(token, S.ins);
@@ -346,6 +353,8 @@
             good: { n: good.length, wr: wrOf(good) }, bad: { n: bad.length, wr: wrOf(bad) }, patches: [...new Set(pts.map(x => x.patch))].filter(Boolean) };
         paintInsights();
     }
+    // one label for a list of patches, the same everywhere in the app ("16.17–16.20"; index.html's DD.patchLabels)
+    const patchRange = list => (window.DD.patchLabels && window.DD.patchLabels.range ? window.DD.patchLabels.range(list) : (list || []).join(', '));
     const fmtPct = (v, d = 0) => v == null ? '–' : `${(v * 100).toFixed(d)}%`;
     const wrCls = v => v == null ? '' : v >= 0.5 ? 'pf-pos' : 'pf-neg';
     // "?" definition chip and data-source chip from glossary.js (empty strings if it is missing)
@@ -399,7 +408,7 @@
               ${B.bins.map(b => `<tr><td class="l">${b.lo === 0 ? 'under ' + fmtPct(b.hi) : b.hi > 1 ? fmtPct(b.lo) + ' +' : fmtPct(b.lo) + '–' + fmtPct(b.hi)}</td><td>${b.n}</td><td>${b.n ? fmtPct(b.pred, 1) : '–'}</td>
                 <td class="${wrCls(b.wr)}">${b.n ? fmtPct(b.wr) : '–'}</td><td class="l pf-muted">${b.n ? '± ' + fmtPct(b.se) : ''}</td></tr>`).join('')}</tbody></table>
               <div class="pf-muted pf-foot">Good drafts (model ≥ 52%): ${B.good.n} games, won ${fmtPct(B.good.wr)} · bad drafts (≤ 48%): ${B.bad.n} games, won ${fmtPct(B.bad.wr)}.
-                Uses the draft view's current data (${esc(B.label || '')}) for games from patch${B.patches.length > 1 ? 'es' : ''} ${esc(B.patches.slice(0, 4).join(', '))}${B.patches.length > 4 ? '…' : ''}; change Time Period / Rank there to re-test. Small samples are noisy: read the ± column.</div>`;
+                Uses the draft view's current data (${esc(B.label || '')}) for games from patch${B.patches.length > 1 ? 'es' : ''} ${esc(patchRange(B.patches))}; change Time Period / Rank there to re-test. Small samples are noisy: read the ± column.</div>`;
         }
         return `<div class="pf-card pf-wide"><div class="pf-card-h"><span>Draft model check</span><span class="pf-muted">does Exp WR predict your games?</span></div>${body}</div>`;
     }
@@ -411,8 +420,8 @@
             <button class="pf-btn pf-small" data-act="insreload">Recalculate</button></div>`;
         if (!I || S.insLoading) { el.innerHTML = head + '<div class="pf-muted pf-pad">Crunching your games…</div>'; return; }
         if (I.error) { el.innerHTML = head + `<div class="pf-muted pf-pad">${esc(I.error)}</div>`; return; }
-        const goals = S.profile.isOwner && !S.champFilter && S.insGroup !== 'arena' ? goalsCard() : '';   // from the season's games, whatever the queue tab
-        if (!I.n) { el.innerHTML = head + goals + `<div class="pf-muted pf-pad">No cached games this season for this queue${S.champFilter ? ` on ${esc(champName(S.champFilter))}` : ''} yet. Use "Load season history" in the header.</div>`; return; }
+        const goals = onOwnProfile() && !S.champFilter && S.insGroup !== 'arena' ? goalsCard() : '';   // from the season's games, whatever the queue tab (also without the client)
+        if (!I.n) { const typing = saveTyping(); el.innerHTML = head + goals + `<div class="pf-muted pf-pad">No cached games this season for this queue${S.champFilter ? ` on ${esc(champName(S.champFilter))}` : ''} yet. Use "Load season history" in the header.</div>`; restoreTyping(typing); return; }
         if (I.arena) { el.innerHTML = head + arenaInsightsHtml(I.arena); return; }
         const o = I.overall, L = I.lane, H = I.habits;
         const streak = H.streak ? `${H.streak.n} ${H.streak.win ? 'win' : 'loss'}${H.streak.n === 1 ? '' : (H.streak.win ? 's' : 'es')} in a row` : '';
@@ -442,11 +451,13 @@
             <div class="pf-sub-h">Time of day</div>${rateBars(H.timeOfDay)}
             <div class="pf-sub-h">Game length</div>${rateBars(H.length)}</div>`;
         html += `</div>`;
-        html += `<div class="pf-ins-grid">${vsLaneCard(I.vsLane)}${curveCard(I.curve)}${lengthCard()}${S.profile.isOwner ? lpCard() : ''}</div>`;
+        html += `<div class="pf-ins-grid">${vsLaneCard(I.vsLane)}${curveCard(I.curve)}${lengthCard()}${onOwnProfile() ? lpCard() : ''}</div>`;
         html += `<div class="pf-card pf-wide"><div class="pf-card-h"><span>Champions</span><span class="pf-muted">click a column to sort · click a portrait for builds</span></div>${champTable(I.champions)}</div>`;
         html += backtestCard();
+        const typing = saveTyping();
         el.innerHTML = html;
-        if (S.profile.isOwner && !S.lp && !S.lpLoading) loadLp();
+        restoreTyping(typing);
+        if (onOwnProfile() && !S.lp && !S.lpLoading) loadLp();   // profile:lp-history also works without the client
     }
     // Arena: placement instead of win / loss; the "win" of the mode is the better half of the lobby (top 3 of 6 teams, top 4 of 8)
     function arenaInsightsHtml(A) {
@@ -589,7 +600,7 @@
         const last = pts[pts.length - 1], net = pts.reduce((t, e) => t + (e.delta || 0), 0);
         return `<div class="pf-card"><div class="pf-card-h"><span>LP history</span><span class="pf-muted">${q === 'RANKED_FLEX_SR' ? 'Flex' : 'Solo/Duo'} · last ${pts.length} recorded</span></div>
             <svg class="pf-form pf-lp" viewBox="0 0 ${W + 24} ${H}">${lines.join('')}<path d="${path}" class="roll"/>${pts.map((e, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(ys[i]).toFixed(1)}" r="3" class="${e.dodge ? 'b' : e.win ? 'w' : 'l'}"><title>${e.dodge ? 'Dodge' : e.win ? 'Win' : 'Loss'} ${e.delta == null ? '' : (e.delta >= 0 ? '+' : '') + e.delta + ' LP'} · ${esc(new Date(e.at).toLocaleString())}</title></circle>`).join('')}</svg>
-            <div class="pf-lp-sum">Now <b>${esc(last.after.tier.charAt(0) + last.after.tier.slice(1).toLowerCase())} ${esc(last.after.rank)} ${last.after.lp} LP</b> · net <b class="${net >= 0 ? 'pf-pos' : 'pf-neg'}">${net >= 0 ? '+' : ''}${net} LP</b> over these games
+            <div class="pf-lp-sum">Now <b>${esc(rankTxt(last.after))} ${last.after.lp} LP</b> · net <b class="${net >= 0 ? 'pf-pos' : 'pf-neg'}">${net >= 0 ? '+' : ''}${net} LP</b> over these games
               · last: ${pts.slice(-8).reverse().map(e => `<span class="${e.delta >= 0 ? 'pf-pos' : 'pf-neg'}">${e.delta == null ? '?' : (e.delta >= 0 ? '+' : '') + e.delta}${e.dodge ? ' (dodge)' : ''}</span>`).join(' ')}</div></div>`;
     }
 
@@ -632,7 +643,16 @@
     async function openOwner() {
         const o = await refreshOwner();
         if (!o) { S.acct = null; S.profile = null; S.error = { code: 'NO_ACCOUNT' }; paintBody(); return; }
-        if (S.profile && S.acct && sameAcct(S.acct, o)) { paintTop(); return; }   // already there
+        if (S.profile && S.acct && sameAcct(S.acct, o)) {   // already there
+            // after a new game of yours (the post-game toast's "Open"): the Summary tab's full list, reloaded, from the top
+            if (S.newGame) {
+                S.newGame = false; S.tab = 'summary'; S.group = 'all'; S.matchError = null;
+                if (S.champFilter) { S.champFilter = null; S.ins = null; S.bt = null; }
+                paintBody(); await loadMatches(true, false);   // (reloads the ledger too)
+                const r = root.querySelector('#pf-right'); if (r && r.scrollIntoView) r.scrollIntoView({ block: 'start' });
+            } else paintTop();
+            return;
+        }
         return openAccount(acctOf(o));
     }
 
@@ -649,11 +669,28 @@
     }
 
     // ---------- painting ----------
+    // Repaints rebuild the inputs inside them (champion filter, goal targets): the one being typed in keeps its text, caret and focus.
+    function saveTyping() {
+        const a = document.activeElement;
+        if (!a || a.tagName !== 'INPUT' || !root.contains(a)) return null;
+        const sel = a.id ? '#' + CSS.escape(a.id) : a.classList.contains('pf-goal-in') ? `.pf-goal-in[data-k="${CSS.escape(a.dataset.k || '')}"][data-role="${CSS.escape(a.dataset.role || '')}"]` : null;
+        if (!sel) return null;
+        let s = null, e = null;
+        try { s = a.selectionStart; e = a.selectionEnd; } catch (x) { /* number inputs have no caret position */ }
+        return { sel, value: a.value, s, e };
+    }
+    function restoreTyping(t) {
+        if (!t) return;
+        const el = root.querySelector(t.sel); if (!el || el === document.activeElement) return;
+        el.value = t.value; el.focus();
+        try { if (t.s != null) el.setSelectionRange(t.s, t.e); } catch (x) { /* number inputs */ }
+    }
     function paintBody() {
         const body = root.querySelector('#pf-body'); if (!body) return;
         if (S.error && !S.profile) { body.innerHTML = errHtml(S.error); paintTop(); startTick(); return; }
         if (!S.acct) { body.innerHTML = '<div class="pf-empty-state">Search a Riot ID to see a profile.</div>'; paintTop(); return; }
         if (S.loadingProfile || !S.profile) { body.innerHTML = skeleton(); paintTop(); return; }
+        const typing = saveTyping();
         body.innerHTML = `
           ${headerHtml()}
           <div class="pf-tabs">
@@ -667,6 +704,7 @@
           </div>
           <div id="pf-live" style="${S.tab === 'live' ? '' : 'display:none'}"></div>`;
         paintLeft(); paintMatches(); paintLiveTab(); paintInsights(); paintTop(); startTick();
+        restoreTyping(typing);
     }
     function paintTop() {
         const u = root.querySelector('#pf-update'), lab = root.querySelector('#pf-updated'), lb = root.querySelector('#pf-livebadge');
@@ -674,7 +712,10 @@
         const left = S.cooldownUntil - Date.now();
         u.disabled = !S.profile || left > 0;
         u.textContent = left > 0 ? `Update (${Math.ceil(left / 1000)}s)` : 'Update';
-        lab.textContent = S.profile ? `${S.stale ? 'Refreshing... ' : ''}Last updated ${ago(S.lastUpdate)}` : '';
+        // a failed background refresh (profile-error) says so instead of "Refreshing..." for good; the ranks shown are the cached ones
+        const rf = S.refreshError ? errInfo(S.refreshError) : null;
+        lab.textContent = S.profile ? `${S.stale ? 'Refreshing... ' : rf ? `Could not refresh: ${rf[0]}. ` : ''}Last updated ${ago(S.lastUpdate)}` : '';
+        lab.title = rf ? rf[1] : '';
         lb.style.display = S.liveBadge && S.tab !== 'live' ? '' : 'none';
         paintRecent(); paintHome();
     }
@@ -682,7 +723,13 @@
         return `<div class="pf-skel"><div class="pf-sk-head"></div><div class="pf-cols"><div class="pf-left">${'<div class="pf-sk-card"></div>'.repeat(3)}</div><div class="pf-right">${'<div class="pf-sk-row"></div>'.repeat(6)}</div></div></div>`;
     }
 
-    function rankCard(label, e) {
+    // gone: the league request failed on this lookup (S.partial.league), so no entry means "not loaded", not "Unranked"
+    function rankCard(label, e, gone) {
+        if (!e && gone) {
+            const why = errInfo(gone);
+            return `<div class="pf-rank pf-unranked">${emb('UNRANKED', 'big', 'pf-emb-dim')}<div><div class="pf-rank-q">${label}</div><div class="pf-rank-t" title="${esc(why[0] + ': ' + why[1])}">Rank unavailable</div>
+              <div class="pf-rank-wl"><button class="pf-btn pf-small" data-act="rankretry" title="Ask Riot for the rank again">Retry</button></div></div></div>`;
+        }
         if (!e) return `<div class="pf-rank pf-unranked">${emb('UNRANKED', 'big', 'pf-emb-dim')}<div><div class="pf-rank-q">${label}</div><div class="pf-rank-t">Unranked</div></div></div>`;
         const apex = ['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(e.tier);
         const total = e.wins + e.losses, wr = pct(e.wins, total);
@@ -694,15 +741,20 @@
         ensureEmblems('big', rankTiers(S.profile.ranked));
         ensureEmblems('mini', ALL_TIERS);
         const p = S.profile, solo = p.ranked.find(e => e.queueType === 'RANKED_SOLO_5x5'), flex = p.ranked.find(e => e.queueType === 'RANKED_FLEX_SR');
+        const rankGone = S.partial && S.partial.league && !p.ranked.length ? S.partial.league : null;
         const ic = p.profileIconId != null ? `${base()}/cdn/${patch()}/img/profileicon/${p.profileIconId}.png` : '';
         const bfw = S.backfill && S.backfill.resumeAt && S.backfill.resumeAt > Date.now() ? ` &middot; rate limit, resumes in <span class="pf-bfwait" data-resume="${S.backfill.resumeAt}">${fmtDur(Math.ceil((S.backfill.resumeAt - Date.now()) / 1000))}</span>` : '';
         const bf = S.backfill && S.backfill.state === 'running' ? `Loading season history ${S.backfill.done}/${S.backfill.total}` : '';
+        // how the last "Load season history" ended (kept until the next run or another profile): why it stopped, or what it added
+        const E = !bf && S.backfillEnd, Em = E && E.state === 'error' ? errInfo(E.error || {}) : null;
+        const bfEnd = !E ? '' : Em ? ` &middot; <span class="pf-bf-end pf-neg">Season history not loaded: ${esc(Em[0])}. ${esc(Em[1])}</span>`
+            : ` &middot; <span class="pf-bf-end pf-muted">${E.state === 'cancelled' ? `Season history cancelled after ${E.done || 0} game${E.done === 1 ? '' : 's'}` : E.done ? `Season history: ${E.done} game${E.done === 1 ? '' : 's'} loaded` : 'Season history: no new games to load'}</span>`;
         return `<div class="pf-head">
           <div class="pf-avatar">${icon(ic, 'pf-avatar-img', '')}<span class="pf-level">${num(p.summonerLevel)}</span></div>
           <div class="pf-id"><div class="pf-name">${esc(p.gameName)}<i>#${esc(p.tagLine)}</i></div>
-            <div class="pf-sub">${esc(p.platform)}${p.isOwner ? ' &middot; your account' : ''}${bf ? ' &middot; ' + esc(bf) + bfw + ' <button class="pf-btn pf-small" data-act="backfill-cancel">Cancel</button>' : ''}</div>
+            <div class="pf-sub">${esc(p.platform)}${onOwnProfile() ? ' &middot; your account' : ''}${bf ? ' &middot; ' + esc(bf) + bfw + ' <button class="pf-btn pf-small" data-act="backfill-cancel">Cancel</button>' : ''}${bfEnd}</div>
             <div class="pf-head-actions"><button class="pf-btn pf-small" data-act="backfill" ${S.backfill && S.backfill.state === 'running' ? 'disabled' : ''}>Load season history</button></div></div>
-          <div class="pf-ranks">${rankCard('Ranked Solo/Duo', solo)}${rankCard('Ranked Flex', flex)}</div></div>`;
+          <div class="pf-ranks">${rankCard('Ranked Solo/Duo', solo, rankGone)}${rankCard('Ranked Flex', flex, rankGone)}</div></div>`;
     }
 
     // left column: champion stats (season ledger), recent summary, mastery
@@ -846,13 +898,18 @@
         else if (!S.matches.length) html += `<div class="pf-empty-state">No ${S.group === 'all' ? '' : GROUP_LABEL[S.group] + ' '}games${S.champFilter ? ` on ${esc(champName(S.champFilter))}` : ''} found${S.champFilter && S.hasMore ? ' yet' : ''}.${S.champFilter && S.hasMore ? '<br><button class="pf-btn" data-act="more">Look further back</button>' : ''}</div>`;
         else html += lastGameCard() + S.matches.map(matchRow).join('');
         if (S.hasMore && S.matches.length) html += `<button class="pf-btn pf-more" data-act="more" ${S.loadingMatches ? 'disabled' : ''}>${S.loadingMatches ? 'Loading...' : 'Show more'}</button>`;
+        const typing = saveTyping();
         el.innerHTML = html;
+        restoreTyping(typing);
     }
 
     // Post-game card: the newest game when it ended within the last 3 hours. Compares it with the player's season averages
     // (cached games) and shows what the draft model gave the team before the game (the draft view's current data).
     const POSTGAME_MS = 3 * 3600 * 1000;
     const draftMemo = {};   // match id -> { wr } | { none } | 'pending'
+    // whose game the post-game card and the Review tab talk about: "you" on your own profile, the player (by name) on anyone else's (HTML-escaped)
+    const whoT = () => onOwnProfile() ? { You: 'You', Your: 'Your', you: 'you', your: 'your', obj: 'you' }
+        : { You: esc(S.profile.gameName), Your: esc(S.profile.gameName) + '’s', you: esc(S.profile.gameName), your: 'their', obj: 'them' };
     function lastGameCard() {
         if (S.group !== 'all') return '';
         const m = S.matches.find(x => !x.remake);
@@ -867,7 +924,8 @@
         const csMin = me.cs / (m.dur / 60), avgCs = isSr(m.queueId) && srRows.length ? srRows.reduce((t, r) => t + r.cs, 0) / Math.max(1, srRows.reduce((t, r) => t + r.dur, 0) / 60) : null;
         const scs = S.matches.map(x => (x.players.find(p => p.puuid === S.profile.puuid) || {}).sc).filter(v => typeof v === 'number');
         const avgSc = scs.length ? scs.reduce((a, b) => a + b, 0) / scs.length : null;
-        const cmp = (v, a, fmt, better = 1) => a == null ? '' : `<span class="${(v - a) * better >= 0 ? 'pf-pos' : 'pf-neg'}">${(v - a) >= 0 ? '+' : ''}${fmt(v - a)}</span> vs your usual`;
+        const W = whoT();
+        const cmp = (v, a, fmt, better = 1) => a == null ? '' : `<span class="${(v - a) * better >= 0 ? 'pf-pos' : 'pf-neg'}">${(v - a) >= 0 ? '+' : ''}${fmt(v - a)}</span> vs ${W.your} usual`;
         // draft check (once per game, asynchronously)
         const team = m.players.filter(p => p.team === me.team), enemy = m.players.filter(p => p.team !== me.team);
         const posOk = ps => ps.length === 5 && ps.every(p => POS_LABEL[p.pos]);
@@ -883,7 +941,7 @@
                 }).catch(() => { draftMemo[m.id] = { none: true }; });
             } else if (d !== 'pending' && !d.none) {
                 const verdict = d.wr >= 0.52 ? 'a good draft' : d.wr <= 0.48 ? 'a tough draft' : 'an even draft';
-                draft = `<div class="pf-pg-draft">Draft check: your team's draft was <b class="${d.wr >= 0.5 ? 'pf-pos' : 'pf-neg'}">${(d.wr * 100).toFixed(1)}%</b> to win (${verdict}) · ${me.win ? (d.wr <= 0.48 ? 'you won it anyway' : d.wr >= 0.52 ? 'and you converted it' : 'won on the Rift, not in the draft') : (d.wr >= 0.52 ? 'the draft was not the problem' : d.wr <= 0.48 ? 'the draft was against you' : 'the draft did not decide this one')}
+                draft = `<div class="pf-pg-draft">Draft check: ${W.your} team's draft was <b class="${d.wr >= 0.5 ? 'pf-pos' : 'pf-neg'}">${(d.wr * 100).toFixed(1)}%</b> to win (${verdict}) · ${me.win ? (d.wr <= 0.48 ? `${W.you} won it anyway` : d.wr >= 0.52 ? `and ${W.you} converted it` : 'won on the Rift, not in the draft') : (d.wr >= 0.52 ? 'the draft was not the problem' : d.wr <= 0.48 ? `the draft was against ${W.obj}` : 'the draft did not decide this one')}
                     <span class="pf-muted">(${esc(d.label || '')})</span></div>`;
             }
         }
@@ -892,7 +950,7 @@
             <div class="pf-pg-h">${icon(champImg(me.champId), 'pf-pg-img', champName(me.champId))}
               <div><div class="pf-pg-t">${me.win ? 'Victory' : 'Defeat'} · ${esc(champName(me.champId))} · ${ago(m.end)}</div>
               <div class="pf-pg-s"><b>${me.k}/${me.d}/${me.a}</b> · DD Score ${typeof me.sc === 'number' ? `<b class="${scoreCls(me.sc)}">${me.sc.toFixed(1)}</b>` : '–'} ${badge}</div></div>
-              <span class="pf-grow"></span>${m.mode === 'CLASSIC' ? `<button type="button" class="pf-btn pf-small" data-act="review" data-id="${esc(m.id)}" data-copy-hide title="Lane at 10 / 15 / 20 min, gold swings, deaths on the map, your items vs the data">Review this game</button>` : ''}${window.DD.copyAsImage ? '<button type="button" class="pf-btn pf-small" data-act="copypg" data-copy-hide title="Copy this card as an image (for Discord)">Copy as image</button>' : ''}<span class="pf-muted pf-pg-tag">Your last game</span></div>
+              <span class="pf-grow"></span>${m.mode === 'CLASSIC' ? `<button type="button" class="pf-btn pf-small" data-act="review" data-id="${esc(m.id)}" data-copy-hide title="Lane at 10 / 15 / 20 min, gold swings, deaths on the map, your items vs the data">Review this game</button>` : ''}${window.DD.copyAsImage ? '<button type="button" class="pf-btn pf-small" data-act="copypg" data-copy-hide title="Copy this card as an image (for Discord)">Copy as image</button>' : ''}<span class="pf-muted pf-pg-tag">${W.Your} last game</span></div>
             <div class="pf-pg-cmp">
               <span>KDA ${kda(me.k, me.d, me.a).toFixed(2)} ${cmp(kda(me.k, me.d, me.a), avgKda, v => v.toFixed(2))}</span>
               <span>CS/min ${csMin.toFixed(1)} ${cmp(csMin, avgCs, v => v.toFixed(1))}</span>
@@ -1019,7 +1077,11 @@
 
     // --- timeline-backed pieces ---
     // minVersion 2 = with the kills (the Review tab's minimap); an older cached timeline is fetched once more for it
+    // ARAM Mayhem games are recorded from the client (Riot's API does not return the mode), so Riot has no timeline to ask for
+    // (by queue, not by src: keyless-imported Summoner's Rift games are 'lcu' too and Riot does have theirs)
+    const noTimeline = m => m.queueId === 2400;
     function ensureTimeline(m, force, minVersion = 1) {
+        if (noTimeline(m)) return;
         const cur = S.tl[m.id];
         if (cur && !force && !(cur.data && (cur.data.v || 1) < minVersion)) return;   // loading, loaded or failed: a failed one is retried only by the Retry button
         S.tl[m.id] = { loading: true };
@@ -1029,6 +1091,7 @@
         });
     }
     function tlStatus(m) {
+        if (noTimeline(m)) return '<div class="pf-muted">No timeline for ARAM Mayhem games: they are recorded from the League client (Riot’s API does not return this mode).</div>';
         const t = S.tl[m.id];
         if (!t || t.loading) return '<div class="pf-tl-wait"><span class="pf-sk-inline"></span> Loading match timeline...</div>';
         if (t.error) return `<div class="pf-tl-err">${esc((t.error.error) || 'Could not load the timeline.')} <button class="pf-btn pf-small" data-act="tlretry" data-id="${esc(m.id)}">Retry</button></div>`;
@@ -1126,7 +1189,7 @@
         const out = [];
         for (const c of cand) { if (Math.abs(c.d) < 1500 || out.length >= 3) break; if (!out.some(o => c.from < o.to && o.from < c.to)) out.push(c); }
         if (!out.length) return '<div class="pf-muted">No big swing: the gold lead never moved 1,500+ in three minutes.</div>';
-        return `<ul class="pf-rv-swings">${out.sort((a, b) => a.from - b.from).map(c => `<li><b>${c.from}–${c.to} min</b>: your team <b class="${c.d > 0 ? 'pf-pos' : 'pf-neg'}">${c.d > 0 ? 'gained' : 'lost'} ${num(Math.abs(c.d))} gold</b></li>`).join('')}</ul>`;
+        return `<ul class="pf-rv-swings">${out.sort((a, b) => a.from - b.from).map(c => `<li><b>${c.from}–${c.to} min</b>: ${whoT().your} team <b class="${c.d > 0 ? 'pf-pos' : 'pf-neg'}">${c.d > 0 ? 'gained' : 'lost'} ${num(Math.abs(c.d))} gold</b></li>`).join('')}</ul>`;
     }
     // Summoner's Rift map: x 0-14870, y 0-14980 (match-v5 positions); y grows upwards
     // review map hover box: shown at once next to the marker under the mouse (SVG <title> tooltips need the mouse on a 1-px line)
@@ -1151,7 +1214,7 @@
         const S2 = 480, X = v =>   // drawn at 480 px (scales down to fit its column)
              (v / 14870 * S2).toFixed(1), Y = v => (S2 - v / 14980 * S2).toFixed(1);
         const nm = pid => { const q = m.players.find(x => x.pid === pid); return q ? champName(q.champId) : 'a tower or minions'; };
-        const mine = T.kills.filter(k => k.v === p.pid || k.p === p.pid || k.as.includes(p.pid));
+        const mine = T.kills.filter(k => k.v === p.pid || k.p === p.pid || k.as.includes(p.pid)), W = whoT();
         // each marker: an instant tooltip (data-tip, shown by the map's own hover box) over a wide invisible hit circle, and with the
         // replay available a click jumps it to 15 s before that moment
         const rs = S.replay[m.id], can = rs && !rs.error && ['watch', 'download', 'downloading'].includes(rs.state);
@@ -1159,7 +1222,7 @@
         const dots = mine.map(k => {
             const died = k.v === p.pid, kill = k.p === p.pid, t = Math.max(0, Math.round(k.m * 60 - 15));
             const help = assists(k);
-            const tip = `${fmtClock(k.m * 60)} · ${died ? `you died to ${nm(k.p)}${help.length ? ` (with ${help.join(', ')})` : ''}` : kill ? `you killed ${nm(k.v)}` : `assist: ${nm(k.p)} killed ${nm(k.v)}`}${can ? ` · click to watch from ${fmtClock(t)}` : ''}`;
+            const tip = `${fmtClock(k.m * 60)} · ${died ? `${onOwnProfile() ? 'you' : S.profile.gameName} died to ${nm(k.p)}${help.length ? ` (with ${help.join(', ')})` : ''}` : kill ? `${onOwnProfile() ? 'you' : S.profile.gameName} killed ${nm(k.v)}` : `assist: ${nm(k.p)} killed ${nm(k.v)}`}${can ? ` · click to watch from ${fmtClock(t)}` : ''}`;   // (escaped as a whole below)
             const act = can ? ` data-act="replayjump" data-id="${esc(m.id)}" data-t="${t}"` : '';
             const mark = died ? `<path d="M${X(k.x) - 6} ${Y(k.y) - 6}l12 12m0-12l-12 12"/>` : `<circle cx="${X(k.x)}" cy="${Y(k.y)}" r="${kill ? 6 : 4}"/>`;
             return `<g class="pf-rv-mk ${died ? 'd' : kill ? 'k' : 'a'}${can ? ' go' : ''}" data-tip="${esc(tip)}"${act}><circle class="hit" cx="${X(k.x)}" cy="${Y(k.y)}" r="13"/>${mark}</g>`;
@@ -1168,7 +1231,7 @@
         const early = mine.filter(k => k.v === p.pid && k.m < 15).length;
         return `<div class="pf-rv-mapwrap"><svg class="pf-rv-map" viewBox="0 0 ${S2} ${S2}"><image href="${esc(base())}/cdn/${esc(patch())}/img/map/map11.png" width="${S2}" height="${S2}" opacity=".7"/>${dots}</svg>
             <div class="pf-rv-tip" hidden></div>
-            <div class="pf-muted">✕ your ${nd} death${nd === 1 ? '' : 's'}${early ? ` (${early} before 15 min)` : ''} · ● your ${nk} kill${nk === 1 ? '' : 's'} · small dots: assists. Hover a mark for the time and who${can ? '; click it to watch that moment in the replay' : ''}.</div></div>`;
+            <div class="pf-muted">✕ ${W.your} ${nd} death${nd === 1 ? '' : 's'}${early ? ` (${early} before 15 min)` : ''} · ● ${W.your} ${nk} kill${nk === 1 ? '' : 's'} · small dots: assists. Hover a mark for the time and who${can ? '; click it to watch that moment in the replay' : ''}.</div></div>`;
     }
     // completed items (no further upgrade, 2,000+ gold) in the order bought, against the saved Coachless table for this champion and lane
     const BUILDS_POS = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', BOTTOM: 'BOTTOM', UTILITY: 'SUPPORT' };
@@ -1195,7 +1258,8 @@
         if (data === undefined || data === null) return h + '<div class="pf-muted">Reading the Coachless table…</div>';
         if (!data.saved) return h + `<div class="pf-muted">No Coachless data saved for ${esc(champName(p.champId))} ${esc(POS_LABEL[p.pos] || '')}: open it in Builds to download it (one champion and role, on demand).</div>`;
         const skipped = rows.filter(r => r.pp >= 0.9 && r.adj > 0 && r.pickRate >= 0.02 && !done.some(d => d.i === r.id)).sort((a, b) => b.adj - a.adj).slice(0, 2);
-        return h + (skipped.length ? `<div class="pf-rv-note">Strong in the data and not in your build: ${skipped.map(r => `${itemImg(r.id)} <b>${esc(r.name)}</b> <span class="pf-pos">+${(r.adj * 100).toFixed(1)} WPA</span>`).join(' · ')} <span class="pf-muted">(Coachless, Emerald+, ${esc((data.patches || []).join(', '))})</span></div>` : '<div class="pf-muted">Every strong item in the data for this champion is in your build, or none is clearly better.</div>');
+        const your = whoT().your;
+        return h + (skipped.length ? `<div class="pf-rv-note">Strong in the data and not in ${your} build: ${skipped.map(r => `${itemImg(r.id)} <b>${esc(r.name)}</b> <span class="pf-pos">+${(r.adj * 100).toFixed(1)} WPA</span>`).join(' · ')} <span class="pf-muted">(Coachless, Emerald+, ${esc(patchRange(data.patches))})</span></div>` : `<div class="pf-muted">Every strong item in the data for this champion is in ${your} build, or none is clearly better.</div>`);
     }
     // Replay: your deaths (and the 3 biggest fights you were in) with a button that opens the replay in the client and jumps
     // 15 s before that moment (replay-main.js). Your own games only: the client downloads replays of its account's games.
@@ -1205,8 +1269,8 @@
         const nm = pid => { const q = m.players.find(x => x.pid === pid); return q ? champName(q.champId) : 'a tower or minions'; };
         const deaths = T.kills.filter(k => k.v === p.pid);
         const rs = S.replay[m.id];
-        if (!rs) loadReplayState(m);
-        const status = !rs ? 'Checking the replay…' : rs.error ? esc(rs.error)
+        if (!rs || (rs.again && !rs.loading && Date.now() - rs.at > 3000)) loadReplayState(m);   // not read yet, or a state that moves on its own
+        const status = !rs || (rs.loading && !rs.state && !rs.error) ? 'Checking the replay…' : rs.error ? esc(rs.error)
             : rs.state === 'watch' ? 'Replay ready.' : rs.state === 'download' ? 'The replay will be downloaded from the client (about 15 MB) when you press a button.'
             : rs.state === 'downloading' ? 'Downloading the replay…' : rs.state === 'incompatible' || rs.state === 'missingOrExpired' ? 'This replay is no longer available (the client only keeps replays of the current patch).' : `Replay: ${esc(rs.state || 'unknown')}`;
         const can = rs && !rs.error && ['watch', 'download', 'downloading'].includes(rs.state);
@@ -1217,29 +1281,46 @@
             ${deaths.length ? `<ul class="pf-rv-deaths">${rows}</ul>` : '<div class="pf-muted">No deaths in this game.</div>'}
             ${can ? `<button type="button" class="pf-btn pf-small" data-act="replayopen" data-id="${esc(m.id)}">Open the replay</button>` : ''}</div>`;
     }
+    // A state that changes on its own (no client yet, checking, downloading, no answer: `again`) is read once more after a few
+    // seconds while this game's Review tab stays open, and again whenever the tab is drawn later.
     async function loadReplayState(m) {
-        S.replay[m.id] = { loading: true };
+        const prev = S.replay[m.id];
+        const mine = S.replay[m.id] = Object.assign({}, prev && !prev.loading ? prev : {}, { loading: true });   // a re-read keeps showing the last state
         const r = await api.invoke('lcu:replay-state', { gameId: m.id }).catch(e => ({ ok: false, error: e.message }));
-        S.replay[m.id] = r && r.code === 'NO_CLIENT' ? { error: 'Open the League client to watch replays.' } : r || { error: 'No answer from the client.' };
+        if (S.replay[m.id] !== mine) return;   // another profile, or a replay button, replaced it meanwhile
+        const res = S.replay[m.id] = r && r.code === 'NO_CLIENT' ? { error: 'Open the League client to watch replays.' } : r || { error: 'No answer from the client.' };
+        res.again = !r || r.code === 'NO_CLIENT' || ['checking', 'downloading', 'unknown'].includes(r.state); res.at = Date.now();
         repaintMatch(m.id);
+        if (res.again) setTimeout(() => { const cur = S.matches.find(x => x.id === m.id); if (cur && S.replay[m.id] === res && S.expanded.has(m.id) && S.mtab[m.id] === 'review') loadReplayState(cur); }, res.state === 'checking' || res.state === 'downloading' ? 3000 : 8000);
     }
+    // "Watch from" / "Open the replay": the replay is opened unless THIS game's replay is open right now (asked each time: it may have
+    // been closed since, or another game's opened; replay-main.js reports `running` per game). A seek that fails on a replay that
+    // looked open opens it once more. "Opened." only after a real open.
     async function replayJump(id, t) {
         const m = S.matches.find(x => x.id === id), me = m && m.players.find(p => p.puuid === S.profile.puuid);
-        const st = S.replay[id] = Object.assign({}, S.replay[id], { msg: 'Opening the replay in the client…' }); repaintMatch(id);
-        let r = st.running ? { ok: true } : await api.invoke('lcu:replay-open', { gameId: id }).catch(e => ({ ok: false, error: e.message }));
-        if (r.ok && t != null) { S.replay[id].msg = 'Waiting for the replay to load…'; repaintMatch(id); r = await api.invoke('lcu:replay-seek', { time: t, player: me && me.name }).catch(e => ({ ok: false, error: e.message })); }
-        S.replay[id] = Object.assign({}, S.replay[id], { msg: r.ok ? (t != null ? `Jumped to ${fmtClock(t)}.` : 'Opened.') : r.error, running: r.ok || S.replay[id].running });
+        S.replay[id] = Object.assign({}, S.replay[id], { loading: false, again: false, msg: 'Opening the replay in the client…' }); repaintMatch(id);   // (no re-read while this runs)
+        const st = await api.invoke('lcu:replay-state', { gameId: id }).catch(() => null);
+        const wasOpen = !!(st && st.ok && st.running);
+        const open = () => api.invoke('lcu:replay-open', { gameId: id }).catch(e => ({ ok: false, error: e.message }));
+        const seek = () => api.invoke('lcu:replay-seek', { time: t, player: me && me.name }).catch(e => ({ ok: false, error: e.message }));
+        let r = wasOpen ? { ok: true } : await open();
+        if (r.ok && t != null) {
+            S.replay[id] = Object.assign({}, S.replay[id], { msg: 'Waiting for the replay to load…' }); repaintMatch(id);
+            r = await seek();
+            if (!r.ok && wasOpen) { r = await open(); if (r.ok) r = await seek(); }   // it was closed in the meantime
+        }
+        S.replay[id] = Object.assign({}, S.replay[id], { loading: false, again: false, msg: r.ok ? (t != null ? `Jumped to ${fmtClock(t)}.` : wasOpen ? 'The replay is already open in the client.' : 'Opened.') : r.error, running: !!r.ok });
         repaintMatch(id);
     }
     function reviewTab(m, me) {
         ensureTimeline(m, false, 2);
         const t = S.tl[m.id];
         if (!t || !t.data) return tlStatus(m);
-        const T = t.data, p = me;
+        const T = t.data, p = me, W = whoT();
         return `<div class="pf-review">
-            <div class="pf-rv-col"><div class="pf-sec-h">Your lane, ahead (+) or behind (−)</div>${reviewLane(m, p, T)}
+            <div class="pf-rv-col"><div class="pf-sec-h">${W.Your} lane, ahead (+) or behind (−)</div>${reviewLane(m, p, T)}
               <div class="pf-sec-h">What moved the game</div>${reviewSwings(m, p, T)}
-              <div class="pf-sec-h">Your items</div>${reviewItems(m, p, T)}</div>
+              <div class="pf-sec-h">${W.Your} items</div>${reviewItems(m, p, T)}</div>
             <div class="pf-rv-col pf-rv-mapcol"><div class="pf-sec-h">Deaths and kills ${help('review')}</div>${reviewMap(m, p, T)}${reviewReplay(m, p, T)}</div></div>`;
     }
 
@@ -1436,13 +1517,15 @@
         if (S.liveLoading && !S.live) { el.innerHTML = note + skeleton(); return; }
         const L = S.live;
         if (!L) { el.innerHTML = note; return; }
-        if (L.error) { el.innerHTML = note + errHtml(L.error); return; }
-        if (!L.inGame) { el.innerHTML = note + `<div class="pf-empty-state">Not in game.<br><button class="pf-btn" data-act="livereload">Check again</button></div>`; return; }
+        if (L.error) { el.innerHTML = note + errHtml(L.error, 'livereload'); return; }   // Retry checks the game again (not the whole profile)
+        if (!L.inGame) { el.innerHTML = note + `<div class="pf-empty-state">${L.reason === 'no-client' ? 'The League client is not running: your live game is read from it.' : 'Not in game.'}<br><button class="pf-btn" data-act="livereload">Check again</button></div>`; return; }
         const g = L.game;
         const done = g.players.filter(p => p.loaded).length, total = g.players.filter(p => !p.bot).length;
         const ogDone = g.players.filter(p => p.og).length;
         const scr = scroller(el), scroll = scr.scrollTop;
-        el.innerHTML = note + `<div class="pf-live-head"><b>${esc(S.queues[g.queueId] || 'Game')}</b> <span class="pf-timer" data-start="${g.startTime}">${g.startTime ? fmtDur(Math.max(0, (Date.now() - g.startTime) / 1000)) : (g.source === 'lcu' ? 'Loading screen' : '')}</span>
+        // a game that has ended (the client said so) keeps its scoreboard, but the clock stops
+        const clock = L.ended ? '<span class="pf-timer pf-muted">Game over</span>' : `<span class="pf-timer" data-start="${g.startTime}">${g.startTime ? fmtDur(Math.max(0, (Date.now() - g.startTime) / 1000)) : (g.source === 'lcu' ? 'Loading screen' : '')}</span>`;
+        el.innerHTML = note + `<div class="pf-live-head"><b>${esc(S.queues[g.queueId] || 'Game')}</b> ${clock}
           <span class="pf-muted">${done < total ? `Scouting ${done}/${total}...` : 'Ranks loaded'}${g.opgg ? (ogDone < total ? ` &middot; op.gg ${ogDone}/${total}` : ' &middot; op.gg done') : ''}${L.finished && L.budget ? ` &middot; ${L.budget.riot} Riot request${L.budget.riot === 1 ? '' : 's'}` : ''}${g.source === 'lcu' ? ' &middot; roster from the client; runes and bans appear when Riot\'s live-game service has the game' : ''}</span>
           <span class="pf-grow"></span>${provChip('live', { title: 'Live game data', short: 'Riot API + op.gg', source: g.source === 'lcu' ? 'League client + Riot API' : 'Riot API (spectator-v5)', rows: [['Players scouted', `${done}/${total}`], ['op.gg champion stats', g.opgg ? `${ogDone}/${total}` : 'off'], ['Riot requests', L.budget ? String(L.budget.riot) : '…']],
               fetchedAt: S.liveAt || null, note: 'Ranks, mastery and recent form come from the Riot API (ranks from the client when it runs); season champion stats and past ranks from op.gg. Everything is cached and rate-limited.',
@@ -1522,7 +1605,15 @@
         else if (act === 'golive') { S.tab = 'live'; S.liveBadge = false; paintBody(); loadLive(false, 'me'); }   // the red badge is your game
         else if (act === 'livereload') loadLive(true);
         else if (act === 'liveopen') { const i = +t.dataset.i; S.liveOpen.has(i) ? S.liveOpen.delete(i) : S.liveOpen.add(i); paintLiveTab(); }
-        else if (act === 'retry') { if (S.acct) openAccount(S.acct, { force: true }); }
+        else if (act === 'retry') { if (S.acct) openAccount(S.acct, { force: true }); else openOwner(); }   // "No account yet": ask again (the client may be up now)
+        else if (act === 'rankretry') {   // "Rank unavailable · Retry": the lookup again (main asks only for the parts it is missing)
+            if (!S.acct || !S.profile) return;
+            const token = S.token; t.disabled = true;
+            const r = await api.invoke('profile:lookup', { ...S.acct }).catch(() => null);
+            if (token !== S.token) return;
+            if (r && r.ok) { S.profile = r.profile; S.partial = r.partial || null; }
+            paintBody();
+        }
         else if (act === 'recent') { const a = S.recent[+t.dataset.i]; if (a) openAccount(a); }
         else if (act === 'update') {
             if (!S.profile || Date.now() < S.cooldownUntil) return;
@@ -1530,14 +1621,15 @@
             const token = S.token;
             const r = await api.invoke('profile:lookup', { ...S.acct, force: true }).catch(() => null);
             if (token !== S.token) return;
-            if (r && r.ok) { S.profile = r.profile; S.lastUpdate = Date.now(); S.stale = false; S.error = null; }
+            if (r && r.ok) { S.profile = r.profile; S.partial = r.partial || null; S.lastUpdate = Date.now(); S.stale = false; S.refreshError = null; S.error = null; }
             else if (r) S.matchError = r;
             await loadMatches(true, true); loadLedger(); paintBody(); loadSeasons(false);
         }
         else if (act === 'backfill') {
-            S.backfill = { state: 'running', done: 0, total: 100 }; paintBody();
-            const r = await api.invoke('profile:backfill', { puuid: S.profile.puuid, platform: S.profile.platform, max: 100 }).catch(() => null);
-            if (!r || !r.ok) { S.backfill = null; paintBody(); }
+            S.backfill = { state: 'running', done: 0, total: 100 }; S.backfillEnd = null; paintBody();
+            const token = S.token;
+            const r = await api.invoke('profile:backfill', { puuid: S.profile.puuid, platform: S.profile.platform, max: 100 }).catch(e => ({ ok: false, code: 'ERROR', error: e.message }));
+            if (token === S.token && (!r || !r.ok)) { S.backfill = null; S.backfillEnd = { state: 'error', error: r || { code: 'ERROR' }, done: 0 }; paintBody(); }
         }
         else if (act === 'backfill-cancel') { if (S.profile) api.invoke('profile:backfill-cancel', { puuid: S.profile.puuid }).catch(() => null); }
         else if (act === 'scout') {
@@ -1590,8 +1682,15 @@
         if (!ev) return;
         const isCur = S.profile && ev.puuid === S.profile.puuid;
         if (ev.kind === 'lp') { S.lp = null; if (S.tab === 'insights') paintInsights(); return; }   // a ranked game's LP was recorded
-        if (ev.kind === 'profile' && isCur) { S.profile = ev.profile; S.stale = false; S.lastUpdate = Date.now(); paintBody(); }
-        else if (ev.kind === 'matches' && isCur) { if (!ev.group || ev.group === S.group || S.group === 'all') loadMatches(true, false); loadLedger(); }
+        if (ev.kind === 'profile' && isCur) { S.profile = ev.profile; S.partial = null; S.stale = false; S.refreshError = null; S.lastUpdate = Date.now(); paintBody(); }   // (a background refresh: every part was cached)
+        else if (ev.kind === 'profile-error' && isCur) { S.stale = false; S.refreshError = ev.error || { code: 'ERROR' }; paintTop(); }   // the background refresh failed
+        else if (ev.kind === 'matches' && isCur) {
+            // your post-game update (owner) and an "All" change can add a game to any queue tab; the main process marked the other lists stale.
+            // While the view is hidden the list is reloaded when you come back (S.dirty), so "Show more" pages are not thrown away for nothing.
+            if (ev.owner && !(S.group === 'all' && !S.champFilter && S.tab === 'summary' && window.DD.currentView() === 'profile')) S.newGame = true;   // the toast's "Open" brings it into view
+            if (ev.owner || !ev.group || ev.group === 'all' || ev.group === S.group || S.group === 'all') { if (window.DD.currentView() === 'profile') loadMatches(true, false); else S.dirty = true; }
+            loadLedger();
+        }
         else if (ev.kind === 'ledger' && isCur) { loadLedger(); if (S.tab === 'insights') loadInsights(); }
         else if (ev.kind === 'matches-error' && isCur) { S.matchError = ev.error; paintMatches(); }
     }
@@ -1599,7 +1698,8 @@
     function onProgress(ev) {
         if (!ev) return;
         if (ev.kind === 'backfill' && S.profile && ev.puuid === S.profile.puuid) {
-            S.backfill = ev; if (ev.state !== 'running') { S.backfill = null; } const h = root.querySelector('.pf-head'); if (h) h.outerHTML = headerHtml();
+            S.backfill = ev; if (ev.state !== 'running') { S.backfill = null; S.backfillEnd = { state: ev.state, error: ev.error || null, done: ev.done || 0 }; }   // the header says how it ended
+            const h = root.querySelector('.pf-head'); if (h) h.outerHTML = headerHtml();
             // keep the "Champions this season" card in step with the games cached so far (throttled; the final 'ledger' update also reloads)
             if (ev.state === 'running' && !ledgerTimer) ledgerTimer = setTimeout(() => { ledgerTimer = null; loadLedger(); }, 1500);
         } else if (ev.kind === 'live') {
@@ -1612,7 +1712,9 @@
     function onLive(ev) {
         S.livePhase = ev;
         S.liveBadge = !!(ev && ev.active);
-        if (!S.liveBadge) { if (S.tab === 'live' && S.live && S.live.inGame) { /* keep the last scoreboard visible */ } }
+        if (!S.liveBadge) {   // your game ended: the last scoreboard stays visible, marked over (its clock stops; loadLive does not show it again)
+            const mine = S.liveBy.me; if (mine && mine.inGame && !mine.ended) mine.ended = Date.now();
+        }
         else if (S.tab === 'live') loadLive(true, 'me');   // the client says YOUR game started: it is yours, whichever profile is open
         paintTop(); if (S.tab === 'live') paintLiveTab();
         const tab = root.querySelector('.pf-tab[data-t="live"]'); if (tab) tab.innerHTML = 'Live game' + (S.liveBadge ? ' <span class="pf-dot"></span>' : '');
@@ -1651,7 +1753,8 @@
     api.on('profile:update', onUpdate);
     api.on('profile:progress', onProgress);
     api.on('profile:live', onLive);
-    window.DD.onView(name => { if (name === 'profile') { if (!S.inited) init(); else { refreshOwner().catch(() => {}); paintTop(); if (S.profile && S.profile.isOwner) loadMatches(true, false); } } });
+    // back on the view: the match list (with its "Show more" pages and open games) is kept, and reloaded only when new games arrived meanwhile
+    window.DD.onView(name => { if (name === 'profile') { if (!S.inited) init(); else { refreshOwner().catch(() => {}); paintTop(); if (S.dirty && S.profile) { S.dirty = false; loadMatches(true, false); } } } });
     // Alt+Home: back to your own profile
     if (typeof document.addEventListener === 'function') document.addEventListener('keydown', e => { if (e.altKey && e.key === 'Home' && S.inited && window.DD.currentView() === 'profile') { e.preventDefault(); openOwner(); } });
     if (window.DD.currentView() === 'profile') init();
@@ -1664,7 +1767,14 @@
         if (S.profile) { paintBody(); if (t === 'insights') loadInsights(); }
     }
     window.DDProfile = {
-        open: openAccount, state: S, showTab: t => showTab(t), openOwner() { window.DD.showView('profile'); return S.inited ? openOwner() : undefined; },
+        open: openAccount, state: S, showTab: t => showTab(t),
+        // YOUR profile (Home, "My profile", the post-game toast, "Review the game", Follow my game's end of game), optionally on a tab;
+        // before the view has started, init opens your account anyway
+        openOwner(tab) {
+            if (!S.inited) { S.pendingAcct = null; S.pendingWho = null; if (tab) S.tab = tab; window.DD.showView('profile'); return undefined; }
+            window.DD.showView('profile');
+            return openOwner().then(() => { if (tab && S.tab !== tab) showTab(tab); });
+        },
         // sidebar / Follow my game / palette: no account + the live tab means YOUR game
         openFromOutside(acct, tab) {
             const who = !acct && tab === 'live' ? 'me' : undefined;

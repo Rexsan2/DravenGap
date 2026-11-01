@@ -28,7 +28,8 @@ const { start } = require('../lib/riot-stub');
     for (const s of [0, 20, 40]) await call('matches', { puuid, platform: 'EUW1', group: 'all', start: s });
     assert.strictEqual(S.log.length, n0, 'second load must be 0 network: ' + S.log.slice(n0).join('\n')); console.log('second load of 3 pages: 0 network calls');
     r = await call('matches', { puuid, platform: 'EUW1', group: 'solo' }); assert(r.matches.every(m => m.queueId === 420) && r.matches.length === 9, r.matches.length);
-    r = await call('matches', { puuid, platform: 'EUW1', group: 'mayhem' }); assert(r.matches.every(m => m.queueId === 2400) && r.matches.length > 0); console.log('queue filters ok');
+    n0 = S.log.length;   // ARAM Mayhem is never in Riot's API: its tab lists the games recorded from the client only (none here) and asks Riot nothing
+    r = await call('matches', { puuid, platform: 'EUW1', group: 'mayhem' }); assert(r.ok && r.matches.length === 0 && S.log.length === n0, JSON.stringify(r).slice(0, 200) + S.log.slice(n0).join(' ')); console.log('queue filters ok');
     r = await call('ledger', { puuid }); assert(r.rows.length >= 20, r.rows.length);
     S.state.fail429 = 99; r = await call('lookup', { gameName: 'Other', tagLine: 'EUW', platform: 'EUW1', force: true });
     assert(r.code === 'RATE_LIMITED' && r.retryAt, JSON.stringify(r)); S.state.fail429 = 0; lim.pausedUntil = 0;

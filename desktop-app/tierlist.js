@@ -46,11 +46,17 @@
             root.addEventListener('input', e => { if (e.target.id === 'tl-q') { S.q = e.target.value; paintBody(); } });
             root.addEventListener('change', e => { if (e.target.dataset.tl === 'niche') { S.niche = e.target.checked; paintBody(); } else if (e.target.dataset.tl === 'sort') { S.sort = e.target.value; paintBody(); } });
         }
-        const d = S.data;
-        root.querySelector('#tl-top').innerHTML = `<div class="tl-tabs">${[['list', 'Tier list'], ['movers', 'Patch movers'], ['pool', 'Pool planner']].map(([k, n]) => `<button class="tl-tab${S.tab === k ? ' on' : ''}" data-tab="${k}">${n}</button>`).join('')}</div>
-            <div class="tl-roles">${ROLES.map(([k, n]) => `<button class="tl-role${S.role === k ? ' on' : ''}" data-role="${k}">${n}</button>`).join('')}</div>
-            <input type="text" id="tl-q" class="tl-q" placeholder="Search…" value="${esc(S.q)}" autocomplete="off" spellcheck="false">
-            <span class="dg-prov-row">${DD.provChip && DD.draftProv && d && !d.error ? DD.provChip('tier', DD.draftProv()) : ''}</span>${DD.help ? DD.help('tier') : ''}`;
+        const d = S.data, top = root.querySelector('#tl-top');
+        // the top row is built once and only its buttons and data chip are redrawn, so the Search box keeps its text, cursor and focus
+        // when the list reloads (a download or save finishing, 'dd:archive-changed')
+        if (!top.querySelector('#tl-q')) {
+            top.innerHTML = `<div class="tl-tabs"></div><div class="tl-roles"></div>
+                <input type="text" id="tl-q" class="tl-q" placeholder="Search…" value="${esc(S.q)}" autocomplete="off" spellcheck="false">
+                <span class="dg-prov-row"></span>${DD.help ? DD.help('tier') : ''}`;
+        }
+        top.querySelector('.tl-tabs').innerHTML = [['list', 'Tier list'], ['movers', 'Patch movers'], ['pool', 'Pool planner']].map(([k, n]) => `<button class="tl-tab${S.tab === k ? ' on' : ''}" data-tab="${k}">${n}</button>`).join('');
+        top.querySelector('.tl-roles').innerHTML = ROLES.map(([k, n]) => `<button class="tl-role${S.role === k ? ' on' : ''}" data-role="${k}">${n}</button>`).join('');
+        top.querySelector('.dg-prov-row').innerHTML = DD.provChip && DD.draftProv && d && !d.error ? DD.provChip('tier', DD.draftProv()) : '';
         paintBody();
     }
     function paintBody() {
@@ -81,6 +87,10 @@
     }
     function moversHtml(list) {
         const withTrend = list.filter(r => r.trend && r.trend.flag);
+        // movers compare one patch with the one before: only Current Patch, Adaptive and a saved patch have that (a day window, Last N
+        // patches or a range spans several), so downloading would change nothing for the other periods
+        const tpSel = document.getElementById('time-period-select'), tp = (tpSel && tpSel.value) || 'patch';
+        if (!list.some(r => r.trend) && !(tp === 'patch' || tp === 'adaptive' || tp.startsWith('p:'))) return DD.ui.empty('Patch movers compare single patches', `Pick Current Patch or a saved patch in Time Period to see what moved since the patch before. Current selection: ${S.data.label}.`);
         if (!list.some(r => r.trend)) return DD.ui.empty('No previous patch to compare with', `Patch movers need the previous patch saved for this rank (it is saved automatically when a patch ends, or from Saved data › Download more history). Current selection: ${S.data.label}.`, { label: 'Saved data…', act: 'saved-data' });
         const up = withTrend.filter(r => r.trend.d > 0).sort((a, b) => b.trend.d - a.trend.d).slice(0, 15);
         const down = withTrend.filter(r => r.trend.d < 0).sort((a, b) => a.trend.d - b.trend.d).slice(0, 15);

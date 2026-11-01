@@ -1,5 +1,5 @@
 // ARAM Mayhem view (stubbed arammayhem + client): your champion is shown before the bench opens, with the "Bench opens soon" advice
-// (keep, or reroll when below the tier list middle and rerolls are left); with a bench the older advice returns; and Settings >
+// (keep, or reroll when half a point below an average reroll and rerolls are left: the same rule as with a bench); with a bench the older advice returns; and Settings >
 // Diagnostics > "Copy champion select snapshot" reports what aram:champ-snapshot answers.
 const H = require('../lib/renderer-harness');
 const R = H.results();
@@ -9,7 +9,7 @@ const tier = { patch: '26.19', dataDate: '2026-10-03', avgWr: 50.4, champions: [
     { slug: 'ahri', name: 'Ahri', wr: 51.7, tier: 'A', rank: 2, tags: ['Mage'], image: '', search: 'ahri' },
     { slug: 'yuumi', name: 'Yuumi', wr: 50.5, tier: 'B', rank: 3, tags: ['Support'], image: '', search: 'yuumi' },
     { slug: 'lux', name: 'Lux', wr: 49.0, tier: 'C', rank: 4, tags: ['Mage'], image: '', search: 'lux' },
-    { slug: 'zed', name: 'Zed', wr: 47.5, tier: 'D', rank: 5, tags: ['Assassin'], image: '', search: 'zed' }] };           // middle = Yuumi 50.5
+    { slug: 'zed', name: 'Zed', wr: 47.5, tier: 'D', rank: 5, tags: ['Assassin'], image: '', search: 'zed' }] };           // average reroll 50.42, so the rule is below 49.92
 const aug = (name, wr, app) => ({ slug: name.toLowerCase(), name, wr, appearance: app, icon: '' });
 // since 2026-10-14 arammayhem.com lists no augment win rate: the tier / rank in its rarity and overall, in the site's order (Zed here)
 const tiered = (name, order, tier, rank, overallTier, overallRank, app) => ({ slug: name.toLowerCase(), name, wr: null, appearance: app, icon: '', tier, rank, overallTier, overallRank, order });
@@ -40,19 +40,19 @@ const KEY = { teemo: 17, ahri: 103, yuumi: 350, lux: 99, zed: 238 };
         const view = await h.ev(`({ rows: [...document.querySelectorAll('#aram-root .aram-list .aram-row')].map(r => r.dataset.slug + ':' + [...r.querySelectorAll('.aram-src')].map(s => s.textContent).join('+')),
             head: (document.querySelector('#aram-root .aram-bhead h2') || {}).textContent, right: document.getElementById('aram-right').textContent.replace(/\\s+/g, ' ') })`);
         R.ok('no bench yet: your champion is listed as current and its build is open (tier, augments, items)', JSON.stringify(view.rows) === '["teemo:current"]' && view.head === 'Teemo' && /S\+/.test(view.right) && /Archmage/.test(view.right) && /Core build/.test(view.right), view);
-        R.ok('advice: Bench opens soon, keep a champion above the tier list middle', a && /Bench opens soon: keep Teemo/.test(a.text) && /ok/.test(a.cls) && /tier list middle 50\.50%/.test(a.text) && /rerolls left: 2/.test(a.text), a);
+        R.ok('advice: Bench opens soon, keep a champion not below an average reroll', a && /Bench opens soon: keep Teemo/.test(a.text) && /ok/.test(a.cls) && /average reroll 50\.42%/.test(a.text) && /rerolls left: 2/.test(a.text), a);
 
-        // below the middle with rerolls -> reroll; without -> no rerolls left; with a bench -> the bench comparison
+        // below an average reroll with rerolls -> reroll; without -> no rerolls left; with a bench -> the bench comparison
         cs = { ...cs, mine: KEY.zed, mineSource: 'pick-intent' };
         a = await waitAdvice(/reroll is worth it/);
         await h.waitFor(`/Eureka/.test(document.getElementById('aram-right').textContent)`, 8000);
         const zr = await h.ev(`({ rows: [...document.querySelectorAll('#aram-right .aram-arow')].map(r => [...r.children].slice(1).map(x => x.textContent.trim()).join('|')), head: (document.querySelector('#aram-right .aram-listhead.aug') || {}).textContent, text: document.getElementById('aram-right').textContent.replace(/\\s+/g, ' ') })`);
         R.ok('augments without win rates: the site order, tier in the rarity and overall (no "-%")', JSON.stringify(zr.rows) === '["Archmage|13.60%|A #18|A #51","Eureka|13.20%|S #3|S #9"]' && /Tier/.test(zr.head) && /Overall/.test(zr.head) && /no longer publishes augment win rates/.test(zr.text) && !/–%|-%/.test(zr.text), zr);
-        R.ok('below the tier list middle with rerolls left: a reroll is worth it', a && /Bench opens soon: a reroll is worth it, 80% of champions have a higher win rate than Zed/.test(a.text) && /go/.test(a.cls) && /rerolls left: 2/.test(a.text), a);
+        R.ok('below an average reroll with rerolls left: a reroll is worth it', a && /Bench opens soon: a reroll is worth it, 80% of champions have a higher win rate than Zed/.test(a.text) && /go/.test(a.cls) && /rerolls left: 2/.test(a.text), a);
         R.ok('your champion changed, so its build follows', await h.waitFor(`document.querySelector('#aram-root .aram-bhead h2') && document.querySelector('#aram-root .aram-bhead h2').textContent === 'Zed'`, 8000));
         cs = { ...cs, rerolls: 0 };
         a = await waitAdvice(/no rerolls are left/);
-        R.ok('below the middle with no rerolls left: says so, no reroll advice', a && /Zed is below the middle of the tier list, but no rerolls are left/.test(a.text) && /warn/.test(a.cls), a);
+        R.ok('below an average reroll with no rerolls left: says so, no reroll advice', a && /Zed is below an average reroll, but no rerolls are left/.test(a.text) && /warn/.test(a.cls), a);
         cs = { ...cs, rerolls: 2, bench: [KEY.teemo] };
         a = await waitAdvice(/Swap to/);
         R.ok('with a bench the usual comparison is back (no "Bench opens soon")', a && /Swap to Teemo from the bench/.test(a.text) && !/Bench opens soon/.test(a.text), a);

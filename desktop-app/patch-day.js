@@ -63,12 +63,14 @@
         if (!el) {
             el = document.createElement('div');
             el.className = 'pd-back';
+            el.id = 'patch-day-modal';   // app-shell's modalOpen(): no draft shortcuts under the card
             document.body.appendChild(el);
             el.addEventListener('click', e => {
                 if (e.target === el || e.target.closest('.pd-x')) { el.style.display = 'none'; return; }
                 const r = e.target.closest('[data-hub]');
                 if (r && DD.openChampion) { el.style.display = 'none'; DD.openChampion(r.dataset.hub, r.dataset.role || null); }
             });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape' && el.style.display !== 'none') el.style.display = 'none'; });
         }
         el.innerHTML = html(d);
         el.style.display = 'flex';

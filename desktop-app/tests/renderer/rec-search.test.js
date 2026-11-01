@@ -13,7 +13,7 @@ const R = H.results();
         const search = q => h.ev(`(() => { const s = document.getElementById('recommendation-search'); s.value = ${JSON.stringify(q)}; s.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
 
         // no slot chosen: the list explains what to do
-        R.ok('no slot chosen: a hint to click a slot\'s 💡', /Click the 💡 on a slot/.test(await h.ev(`document.getElementById('recommendation-list').textContent`)));
+        R.ok('no slot chosen: a hint to press SUGGEST under a slot', /Press SUGGEST under a slot/.test(await h.ev(`document.getElementById('recommendation-list').textContent`)));
 
         // the reported case: search "renat", pick Renata for Support, then the enemy Bot
         await suggest('left', 'SUPPORT');

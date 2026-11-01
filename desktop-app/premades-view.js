@@ -13,8 +13,9 @@
 //     assignment with the most games in role; change it with the role menus), your record when all of you played together
 //     (profile:group-history), and the best champion combos from everyone's pool (DD.stackCombos: each champion's strength plus
 //     the synergy of every two of them), with each player's best picks for this stack. Click a combo for its details.
-// Time Period (header): your games together are the ones played in its patches (DD.periodPatches), unless "All my saved games" is
-// ticked (settings.premadesAllGames); the model numbers always come from its dataset and Rank, like the draft.
+// Time Period (header): your games together are the ones played in its patches (DD.periodPatches; for Last N patches and a patch
+// range, every released patch it spans), unless "All my saved games" is ticked (settings.premadesAllGames); the model numbers always
+// come from its dataset and Rank, like the draft. New games saved in Profile (profile:update) are read again.
 (function () {
     'use strict';
     const DD = window.DD, root = document.getElementById('premades-root');
@@ -27,9 +28,27 @@
     const ROLES = Object.keys(ROLE_LABEL);
     const S = { owner: null, list: null, err: null, loading: false, sel: null, hist: {}, model: {}, stack: new Set(), seq: 0, allGames: false,
         roles: {}, poolMode: 'played', plan: null, group: null, detail: null };
-    // the patches your games must be from (null = every saved game)
-    const period = () => (S.allGames || !DD.periodPatches ? null : DD.periodPatches());
+    // the patches your games must be from (null = every saved game). Your own games do not depend on which LoLalytics patches are
+    // saved, so "Last N patches" is the N newest released patches and a patch range every released patch inside it (Data Dragon's
+    // list, through DD.patchLabels.missingIn), as in Builds; the other periods use DD.periodPatches as they are.
+    const cmpPatch = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); return (x[0] - y[0]) || (x[1] - y[1]); };
+    function period() {
+        if (S.allGames || !DD.periodPatches) return null;
+        const p = DD.periodPatches(), sel = document.getElementById('time-period-select'), tp = (sel && sel.value) || '';
+        const L = DD.patchLabels, last = /^last(\d)$/.exec(tp), range = /^r:(\d+\.\d+)-(\d+\.\d+)$/.exec(tp);
+        let released = null;
+        if (L && L.missingIn && range) released = [range[1], range[2], ...L.missingIn([range[1], range[2]])];
+        else if (L && L.missingIn && last && p.patches.length) {
+            const cur = p.patches.slice().sort(cmpPatch).pop();
+            released = [cur, ...L.missingIn(['0.0', cur]).reverse()].slice(0, Number(last[1]));
+            if (released.length < Number(last[1])) released = null;   // Data Dragon's patch list is not read yet
+        }
+        const patches = released ? [...new Set(released)].sort((a, b) => cmpPatch(b, a)) : p.patches;
+        return { patches, label: p.label };
+    }
     const patchesArg = () => { const p = period(); return p ? p.patches : null; };
+    // "16.17–16.20" for several patches (the one range format of the app)
+    const spanOf = list => (DD.patchLabels && DD.patchLabels.range ? DD.patchLabels.range(list) : list.slice().sort(cmpPatch).join(', '));
     const keyOf = f => `${String(f.name).toLowerCase()}#${String(f.tag).toLowerCase()}`;
     const champs = () => DD.getChampions() || [];
     const byKey = k => champs().find(c => Number(c.key) === Number(k)) || null;
@@ -79,30 +98,37 @@
         for (const k of S.stack) { const g = S.list && S.list.find(x => keyOf(x) === k); if (g) loadFriend(g, true); }
     }
     const selected = () => (S.list || []).find(f => keyOf(f) === S.sel) || null;
+    // S.hist / S.model are replaced (not emptied) by reset() on a Time Period / Rank change or new games: an answer that arrives after
+    // that belongs to the old selection and is dropped, so it can't sit in the new state and be taken as current.
     async function loadFriend(f, quiet) {
-        const k = keyOf(f);
-        if (S.hist[k]) { if (!quiet) computeModel(f); return; }
-        S.hist[k] = { loading: true }; if (!quiet) paint();
-        const r = await api.invoke('profile:duo-history', { owner: { puuid: S.owner.puuid }, partner: { gameName: f.name, tagLine: f.tag }, patches: patchesArg() }).catch(e => ({ ok: false, error: e.message }));
-        S.hist[k] = r;
+        const k = keyOf(f), hist = S.hist;
+        if (!S.owner) return;   // your account is being read again (reload): load() asks for the friends once it is known
+        if (hist[k]) { if (!quiet) computeModel(f); return; }
+        hist[k] = { loading: true }; if (!quiet) paint();
+        // the friend's puuid too: games played under an older Riot ID count, as they do in the list (playedWith groups by puuid)
+        const r = await api.invoke('profile:duo-history', { owner: { puuid: S.owner.puuid }, partner: { gameName: f.name, tagLine: f.tag, puuid: f.puuid }, patches: patchesArg() }).catch(e => ({ ok: false, error: e.message }));
+        if (hist !== S.hist) return;
+        hist[k] = r;
         paint();
         if (!quiet) computeModel(f);
     }
     // Summoner's Rift lane pairings with you, most played first
     const lanesOf = h => (h && h.ok ? h.lanes.filter(l => POS_ROLE[l.myPos] && POS_ROLE[l.theirPos] && l.myPos !== l.theirPos) : []);
     async function computeModel(f) {
-        const k = keyOf(f), h = S.hist[k];
+        const k = keyOf(f), h = S.hist[k], models = S.model;
         const lane = lanesOf(h)[0];
-        if (!lane || !DD.duoPairs) { S.model[k] = { none: true }; paint(); return; }
+        if (!lane || !DD.duoPairs) { models[k] = { none: true }; paint(); return; }
         const roleA = POS_ROLE[lane.myPos], roleB = POS_ROLE[lane.theirPos];
         const mk = `${k}|${roleA}|${roleB}`;
-        if (S.model[k] && S.model[k].key === mk) return;
-        S.model[k] = { key: mk, loading: true }; paint();
+        if (models[k] && models[k].key === mk && !models[k].retry) return;
+        models[k] = { key: mk, loading: true }; paint();
         const theirs = Object.keys((h.partnerChamps || {})[lane.theirPos] || {}).map(byKey).filter(Boolean).map(c => c.id);
         const mine = [...new Set([...(DD.myPool && DD.myPool() || []), ...h.pairs.filter(p => p.myPos === lane.myPos).map(p => (byKey(p.mine) || {}).id).filter(Boolean)])];
         let res = null;
         try { res = await DD.duoPairs({ roleA, roleB, poolA: mine.length ? mine : null, poolB: theirs.length ? theirs : null, perSide: 15, limit: 400, blank: true }); } catch (e) { res = { error: e.message }; }
-        S.model[k] = { key: mk, roleA, roleB, lane, res, theirs, mine };
+        if (models !== S.model) return;
+        // no draft data yet (still loading, offline, not downloaded) or an error: shown, but worked out again on the next select / show
+        models[k] = { key: mk, roleA, roleB, lane, res, theirs, mine, retry: !res || !!res.error };
         paint();
     }
 
@@ -123,7 +149,7 @@
     function sideHtml() {
         const p = period();
         const head = `<div class="pm-h">Premades <span class="pm-m">${S.owner ? esc(S.owner.gameName) : ''}</span></div>
-            <div class="pm-period"><span class="pm-m">Your games: <b>${p ? esc(p.label) : 'all saved games'}</b>${p && p.patches.length > 1 ? ` (${esc(p.patches.slice().reverse().join(', '))})` : ''}</span>
+            <div class="pm-period"><span class="pm-m">Your games: <b>${p ? esc(p.label) : 'all saved games'}</b>${p && p.patches.length > 1 ? ` (${esc(spanOf(p.patches))})` : ''}</span>
             <label class="pm-m" title="Ignore the Time Period for your games together (the champion numbers still follow it)"><input type="checkbox" data-allgames${S.allGames ? ' checked' : ''}> All my saved games</label></div>`;
         if (S.loading && !S.list) return head + '<div class="pm-m">Reading your saved games…</div>';
         if (S.err) return head + `<div class="pm-m">${esc(S.err)}</div>`;
@@ -199,7 +225,7 @@
         for (const f of friends) {
             const hi = S.hist[keyOf(f)];
             if (!hi || !hi.ok) return { waiting: f, error: hi && !hi.loading && !hi.ok ? hi.error : null };
-            const p = { key: keyOf(f), name: f.name, tag: f.tag, roles: {}, champs: {} };
+            const p = { key: keyOf(f), name: f.name, tag: f.tag, puuid: f.puuid, roles: {}, champs: {} };
             for (const [pos, cs] of Object.entries(hi.partnerChamps || {})) {
                 const r = POS_ROLE[pos]; if (!r) continue;
                 for (const [ck, n] of Object.entries(cs)) { p.roles[r] = (p.roles[r] || 0) + n; const c = byKey(ck); if (c) (p.champs[r] = p.champs[r] || {})[c.id] = n; }
@@ -233,12 +259,12 @@
     const planKey = people => [people.map(p => `${p.key}:${p.role}`).join(','), S.poolMode, periodKey(), (DD.myPool && DD.myPool() || []).length].join('|');
     async function computePlan(people) {
         const key = planKey(people);
-        if (S.plan && S.plan.key === key) return;
+        if (!S.owner || (S.plan && S.plan.key === key)) return;   // (no account while it is read again: the next paint asks again)
         S.plan = { key, loading: true };
         const gk = [people.map(p => p.key).join(','), patchesArg() ? patchesArg().join(',') : 'all'].join('|');
         if (!S.group || S.group.key !== gk) {
             S.group = { key: gk, loading: true };
-            api.invoke('profile:group-history', { owner: { puuid: S.owner.puuid }, partners: people.slice(1).map(p => ({ gameName: p.name, tagLine: p.tag })), patches: patchesArg() })
+            api.invoke('profile:group-history', { owner: { puuid: S.owner.puuid }, partners: people.slice(1).map(p => ({ gameName: p.name, tagLine: p.tag, puuid: p.puuid })), patches: patchesArg() })
                 .catch(e => ({ ok: false, error: e.message })).then(r => { if (S.group && S.group.key === gk) { S.group = { key: gk, res: r }; paint(); } });
         }
         let res = null;
@@ -290,9 +316,10 @@
             return `<div class="pm-pair pm-click pm-combo" data-combo="${ci}">${c.champs.map((id, i) => ico(id, undefined, plan.people[i].role)).join('')}<span>${c.names.map(esc).join(' + ')}</span>
                 <b class="${sgn(c.edge)}" title="Every champion's strength plus the synergy of every two of them, in win-rate points">${pts(c.edge)}</b><span class="pm-m">synergy ${pts(c.syn)}</span>${r ? `<span class="pm-m">you: </span>${rec(r.w, r.games)}` : ''}</div>`;
         }).join('');
-        // the combos you actually played together
-        const playedCombos = g && g.ok ? g.combos.filter(c => c.pos.every(x => POS_ROLE[x])).slice(0, 5) : [];
-        const playedHtml = playedCombos.length ? `<div class="pm-sub">Most played together</div>${playedCombos.map((c, ci) => `<div class="pm-pair pm-click" data-played="${ci}">${c.champs.map((k, i) => { const ch = byKey(k); return ch ? ico(ch.id, undefined, POS_ROLE[c.pos[i]]) : ''; }).join('')}
+        // the combos you actually played together (Summoner's Rift only; data-played is the index in the full list, ARAM ones included,
+        // which is where the click looks it up)
+        const playedCombos = g && g.ok ? g.combos.map((c, ci) => ({ ...c, ci })).filter(c => c.pos.every(x => POS_ROLE[x])).slice(0, 5) : [];
+        const playedHtml = playedCombos.length ? `<div class="pm-sub">Most played together</div>${playedCombos.map(c => `<div class="pm-pair pm-click" data-played="${c.ci}">${c.champs.map((k, i) => { const ch = byKey(k); return ch ? ico(ch.id, undefined, POS_ROLE[c.pos[i]]) : ''; }).join('')}
             <span>${c.champs.map(k => esc((byKey(k) || {}).name || k)).join(' + ')}</span>${rec(c.w, c.games)}</div>`).join('')}` : '';
         return `<div class="pm-card pm-wide pm-stack"><div class="pm-card-h">${title} ${DD.help ? DD.help('pair-edge') : ''} <span class="pm-m">${n} players</span>
                 <span class="pm-pool"><label class="pm-m"><input type="radio" name="pm-pool" value="played"${S.poolMode === 'played' ? ' checked' : ''}> Champions we played</label>
@@ -396,8 +423,8 @@
         if (pl && S.group && S.group.res && S.group.res.ok) {
             // a combo you played: its numbers from the model (your roles and champions in that game)
             const g = S.group.res.combos[Number(pl.dataset.played)], ids = g && g.champs.map(k => (byKey(k) || {}).id);
-            if (!g || ids.some(x => !x)) return;
-            const rs = g.pos.map(x => POS_ROLE[x]);
+            const rs = g ? g.pos.map(x => POS_ROLE[x]) : [];
+            if (!g || ids.some(x => !x) || rs.some(r => !r)) return;   // (a game with no lanes, e.g. ARAM, has no model numbers)
             if (ids.length === 2) { openPair(ids[0], rs[0], ids[1], rs[1]); return; }
             const people = stackPeople().people || [];
             S.detail = { kind: 'loading' };
@@ -436,7 +463,20 @@
         paint();
     }
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.detail && DD.currentView() === 'premades') closeDetail(); });
-    DD.onView((name, prev) => { if (name === 'premades' && prev !== 'premades') { if (!S.list || S.err || S.periodKey !== periodKey()) load(); else paint(); } });
+    DD.onView((name, prev) => {
+        if (name !== 'premades' || prev === 'premades') return;
+        if (!S.list || S.err || S.periodKey !== periodKey()) { load(); return; }
+        paint();
+        const f = selected(), m = f && S.model[keyOf(f)];
+        if (m && m.retry) computeModel(f);   // the draft data was not there last time
+    });
+    // a game of yours was saved in Profile (the post-game refresh, or a refresh of your own profile): the players, your games together
+    // and the stack planner are read again, now if the view is shown, else when it is next shown
+    api.on('profile:update', ev => {
+        if (!ev || ev.kind !== 'matches' || !(ev.owner || (S.owner && ev.puuid === S.owner.puuid))) return;
+        reset();
+        if (DD.currentView() === 'premades') load();
+    });
     // Time Period / Rank changed: your games together and the model numbers are read again (now, or when the view is next shown)
     const periodKey = () => { const p = period(); return [p ? p.patches.join(',') : 'all', document.getElementById('time-period-select') && document.getElementById('time-period-select').value, document.getElementById('rank-select') && document.getElementById('rank-select').value].join('|'); };
     for (const id of ['time-period-select', 'rank-select']) {

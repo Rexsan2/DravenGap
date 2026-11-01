@@ -21,7 +21,7 @@
         'exp-wr': { group: 'Draft', title: 'Exp WR: expected win rate', html: `
             <p>Your estimated chance to win if you pick this champion into the current draft: <b>meta strength</b> (the champion's shrunk base WR) plus the <b>draft effect</b> (Shrunk Δ from the current allies and enemies).</p>
             <p><b>Why log-odds:</b> the two are added on the log-odds scale, logit(Exp WR) = logit(Base WR) + logit(50% + Shrunk Δ). Near 50% this is just base + Δ, but it stays sensible at extreme win rates and never leaves 0-100%. Uncertainty from both parts is combined (assumed independent).</p>
-            <p><b>Who it's for:</b> an average player at the selected rank. Your personal "You" column is <b>not</b> included.</p>
+            <p><b>Who it's for:</b> an average player at the selected rank. Your personal "For you" column is <b>not</b> included.</p>
             <p class="pp-muted">The thin bar under each value is its 95% range (see "Uncertainty bar"). This stops a 46%-WR champion with a +2% Δ from outranking a 53% champion with +1%.</p>` },
         'uncertainty': { group: 'Draft', title: 'Uncertainty bar', html: `
             <p>The thin bar under an Exp WR shows how sure the estimate is. The track runs from 40% to 60%; the tick in the middle marks 50%.</p>
@@ -73,7 +73,7 @@
             <p>The brief for your pick once champion select has it: your Exp WR in this draft, the lane matchup against your opponent (adjusted Δ, PP, games), the draft verdict, how you do on the champion (your history, and your record against this opponent from Profile), the best items against your opponent when that matchup's builds are loaded, counters to watch while the opponent is unknown, and composition warnings.</p>` },
         'ban-value': { group: 'Draft', title: 'Ban value (Bans tab)', html: `<p>Expected wins the enemy gains per 100 games if a champion is left open: its pick rate in a lane × its edge over 50% Exp WR against your current picks, summed over the enemy's open lanes. A rough guide: it assumes the enemy picks each champion as often as usual.</p>` },
         'duo': { group: 'Draft', title: 'Duo synergy', html: `
-            <p>Pairs for you and your duo partner, ranked by the pair's <b>duo Exp WR</b>: both champions' base strength plus their adjusted synergy Δ (the same sample-size shrinkage as Shrunk Δ, using the duo prior for Bot + Support and the jungle prior for Jungle + a lane).</p>
+            <p>Pairs for you and your duo partner, ranked by the <b>pair edge</b>: (your Exp WR − 50) + (your partner's Exp WR − 50) + their adjusted synergy Δ, in this draft (the picks already made count, so it is not the base win rates). Synergy uses the same sample-size shrinkage as Shrunk Δ, with the duo prior for Bot + Support and the ally prior for every other pair.</p>
             <p>PP is the chance the pair's synergy is truly positive, on the usual scale. "Together" is your record with the partner from the games saved in Profile.</p>
             ${SCALE}` },
         'adaptive': { group: 'Draft', title: 'Adaptive time period', html: `
@@ -126,7 +126,7 @@
             <p><b>Reroll advice</b>: an average reroll is the mean Mayhem WR over all champions (a reroll is random); a bench swap is suggested when the bench has a champion 1+ point better.</p>` },
         'arena': { group: 'Arena', title: 'Arena numbers', html: `
             <p><b>Top-half rate</b>: how often the champion finished in the better half of the lobby (top 3 of 6 teams in today's 3-player format; top 4 of 8 in the older 2-player format). This is LoLalytics' "Win" for Arena. First place alone is much rarer.</p>
-            <p><b>Top 4 / average place</b> (your Profile's Arena tab): the same idea for your own games. The "win" line is half the teams in that game, so 2v2 and 3v3 games count fairly.</p>
+            <p><b>Top half / average place</b> (your Profile's Arena tab): the same idea for your own games. The "win" line is half the teams in that game, so 2v2 and 3v3 games count fairly.</p>
             <p><b>Augments and items</b>: top-half rate when taken, and how often. Later picks and items look better because only players who survive longer reach them, so each row is compared with its own group's average ("vs avg"). Small samples are pulled toward that average before sorting (counted fully after a few hundred games).</p>
             <p><b>Partners</b>: how a pair did together against what the two champions do apart ("vs apart"). The champion-select estimate is the two champions' average top-half rate plus that pair effect.</p>
             <p class="pp-muted">Source: lolalytics.com (Arena tier list and build pages), fetched when you open the view or a champion, cached for about 6 hours. Augment icons: CommunityDragon.</p>` },
@@ -265,11 +265,13 @@
         }
     });
     document.addEventListener('mousedown', e => { if (pop.style.display !== 'none' && !pop.contains(e.target) && !(popAnchor && popAnchor.contains(e.target))) hidePop(); });
+    // An open popover (or the Glossary dialog) takes the Escape for itself: capture phase and stopImmediatePropagation, so a panel
+    // under it that also closes on Escape (Premades details, other document listeners) stays open.
     document.addEventListener('keydown', e => {
         if (e.key !== 'Escape') return;
-        if (pop.style.display !== 'none') { hidePop(); e.stopPropagation(); }
-        else if (modal.style.display !== 'none') closeGloss();
-    });
+        if (pop.style.display !== 'none') { hidePop(); e.stopImmediatePropagation(); }
+        else if (modal.style.display !== 'none') { closeGloss(); e.stopImmediatePropagation(); }
+    }, true);
     window.addEventListener('resize', hidePop);
     DD.onView && DD.onView(hidePop);
 })();

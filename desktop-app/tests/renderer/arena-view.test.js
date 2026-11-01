@@ -45,6 +45,12 @@ let cs = { connected: true, phase: 'Lobby', inChampSelect: false };
         R.ok('stat line says 1st to 3rd of 6; augments (14 shown) and start items listed, partners, a data chip', /1st to 3rd of 6/.test(b.line) && b.augs === 14 + ahri.items.start.length && b.parts > 0 && b.chip, b);
         await h.ev(`document.querySelector('#arena-root [data-rarity="prismatic"]').click(); 1`);
         R.ok('rarity tab: prismatic only', await h.ev(`[...document.querySelectorAll('#arena-root .arena-rar')].slice(0, 14).every(i => i.classList.contains('r-prismatic'))`));
+
+        // changing Ranks while a champion is open used to throw (the header read the cleared tier list) and leave the list on "Loading"
+        await h.ev(`(() => { const s = document.querySelector('#arena-root [data-act="bracket"]'); s.value = 'emerald_plus'; s.dispatchEvent(new Event('change', { bubbles: true })); return 1; })()`);
+        R.ok('Ranks change with a champion open: the list comes back and the build stays', await h.waitFor(`document.querySelectorAll('#arena-root .arena-list .arena-row').length >= 1 && document.querySelectorAll('#arena-root .arena-place').length === 6 && /Emerald\\+/.test(document.querySelector('#arena-right .arena-sub').textContent)`, 10000),
+            await h.ev(`({ rows: document.querySelectorAll('#arena-root .arena-list .arena-row').length, places: document.querySelectorAll('#arena-root .arena-place').length, sub: (document.querySelector('#arena-right .arena-sub') || {}).textContent })`));
+        R.ok('... without a null error', !h.logs.some(l => /Cannot read properties of null/.test(l)), h.logs.filter(l => /null/.test(l)).slice(-3));
         R.ok('the glossary has the Arena entry used by the "?" chips', await h.ev(`!!(DD.glossary && DD.glossary.arena && /Top-half rate/.test(DD.glossary.arena.html))`));
 
         // champion select (Arena, queue 1750): Follow my game switches here, the left panel shows you and your partner

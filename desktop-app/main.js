@@ -10,6 +10,8 @@ const lolalytics = require('./lolalytics-scraper');
 const coachless = require('./coachless-scraper');
 const { createRunner: createCoachlessRunner } = require('./coachless-runner');
 const diagnostics = require('./diagnostics-main');
+const { readJson, writeJsonAtomic } = require('./json-store'); // settings / favorites / history: atomic writes, corrupt files kept aside
+const { clampToDisplay, maximizeWhenShown, isOwnPage } = require('./window-helpers'); // main window: on-screen bounds, deferred maximize, navigation guard
 
 // Recent log lines for Settings > Diagnostics > Export: this process's console plus the window's (see createWindow).
 const logRing = diagnostics.createLogRing();
@@ -41,15 +43,16 @@ async function getLeagueCredentials() {
             }
         };
 
+        // Each attempt is killed after 10 s (a hung wmic / PowerShell spawn would otherwise never answer); a timeout counts as a failure.
         // Attempt 1: WMIC (Standard for Windows 10 / Older Windows 11)
-        exec('wmic PROCESS WHERE name="LeagueClientUx.exe" GET commandline', (error, stdout) => {
+        exec('wmic PROCESS WHERE name="LeagueClientUx.exe" GET commandline', { timeout: 10000 }, (error, stdout) => {
             if (!error && stdout && !stdout.includes('No Instance(s) Available.') && stdout.includes('--app-port')) {
                 return extractCredentials(stdout);
             }
 
             // Attempt 2: PowerShell (Required for Windows 11 24H2+ where WMIC is removed)
             const psCommand = 'powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name=\'LeagueClientUx.exe\'\\" | Select-Object -ExpandProperty CommandLine"';
-            exec(psCommand, (psError, psStdout) => {
+            exec(psCommand, { timeout: 10000 }, (psError, psStdout) => {
                 if (!psError && psStdout && psStdout.includes('--app-port')) {
                     return extractCredentials(psStdout);
                 }
@@ -106,9 +109,7 @@ const personalHistoryFilePath = path.join(userDataPath, 'personal-history.json')
 
 function readPersonalHistory() {
     try {
-        if (fs.existsSync(personalHistoryFilePath)) {
-            return JSON.parse(fs.readFileSync(personalHistoryFilePath, 'utf-8')) || {};
-        }
+        return readJson(personalHistoryFilePath, {}) || {};
     } catch (error) {
         console.error('Failed to read personal history:', error);
     }
@@ -117,7 +118,7 @@ function readPersonalHistory() {
 
 function writePersonalHistory(store) {
     try {
-        fs.writeFileSync(personalHistoryFilePath, JSON.stringify(store));
+        writeJsonAtomic(personalHistoryFilePath, store);
     } catch (error) {
         console.error('Failed to save personal history:', error);
     }
@@ -252,6 +253,8 @@ async function runScrapeJobs(sender, jobs, opts) {
                         period, rank, signal, championList, concurrency: opts && opts.background ? 2 : undefined,
                         onProgress: p => send('scrape-progress', { jobIndex: i, jobCount: jobs.length, period, rank, ...p })
                     });
+                    // result.failed > 0: pages that kept failing; the window keeps it only as partial (never over a complete copy)
+                    if (result.failed) console.warn(`LoLalytics download ${period} / ${rank}: ${result.failed} of ${result.requested} champion-role pages failed after retries`);
                     send('scrape-dataset', { period, rank, scrapedAt: new Date().toISOString(), ...result });
                     completed++;
                 } catch (error) {
@@ -386,9 +389,7 @@ ipcMain.handle("get-pickable-champions", () => sharedLcu.get('/lol-champ-select/
 
 ipcMain.handle('get-favorites', () => {
   try {
-    if (fs.existsSync(favoritesFilePath)) {
-      return JSON.parse(fs.readFileSync(favoritesFilePath, 'utf-8'));
-    }
+    return readJson(favoritesFilePath, {});
   } catch (error) {
     console.error('Failed to read favorites:', error);
   }
@@ -397,7 +398,7 @@ ipcMain.handle('get-favorites', () => {
 
 ipcMain.handle('save-favorites', (event, favorites) => {
   try {
-    fs.writeFileSync(favoritesFilePath, JSON.stringify(favorites, null, 2));
+    writeJsonAtomic(favoritesFilePath, favorites, { pretty: true });
   } catch (error) {
     console.error('Failed to save favorites:', error);
   }
@@ -420,20 +421,14 @@ ipcMain.handle('copy-region', async (event, r) => {
     } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('get-settings', () => {
-  try {
-    if (fs.existsSync(settingsFilePath)) {
-      return JSON.parse(fs.readFileSync(settingsFilePath, 'utf-8'));
-    }
-  } catch (error) {
-    console.error('Failed to read settings:', error);
-  }
-  return {};
-});
+// Settings are one object saved whole, so the renderer's DD.patchSettings does read -> merge -> save. A missing file is {}; a file
+// that does not parse is moved aside and {} returned; any other read error rejects, so a patch is never saved over settings that
+// could not be read (that used to wipe every other key).
+ipcMain.handle('get-settings', () => readJson(settingsFilePath, {}));
 
 ipcMain.handle('save-settings', (event, settings) => {
   try {
-    fs.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2));
+    writeJsonAtomic(settingsFilePath, settings || {}, { pretty: true });
     if (typeof trayApp !== 'undefined' && trayApp.settingsChanged) trayApp.settingsChanged(settings || {});
   } catch (error) {
     console.error('Failed to save settings:', error);
@@ -458,7 +453,8 @@ require('./replay-main').register(featureDeps);  // replay review: download / op
 let mainWindowRef = null;
 const miniWindow = require('./mini-main').register({ // the compact always-on-top champ-select window (mini:*)
     ipcMain, BrowserWindow, screen: () => require('electron').screen, appDir: __dirname, userDataPath,
-    getMainWindow: () => mainWindowRef, sendToWindow
+    getMainWindow: () => mainWindowRef, sendToWindow,
+    showMain: () => trayApp.show && trayApp.show()   // "open DravenGap" from the mini window: restores from the tray too
 });
 // Tray, close-to-tray, one instance, Start with Windows (tray-main.js)
 const trayApp = require('./tray-main').register({
@@ -479,15 +475,19 @@ diagnostics.register({                            // Settings > Diagnostics: sto
 function getWindowState() {
   // Default values for first-time launch
   const defaultState = { width: 1280, height: 800, isMaximized: true };
+  let state = defaultState;
   try {
-    if (fs.existsSync(windowStateFilePath)) {
-      const savedState = JSON.parse(fs.readFileSync(windowStateFilePath, 'utf-8'));
-      return { ...defaultState, ...savedState };
-    }
+    const savedState = readJson(windowStateFilePath, null);
+    if (savedState) state = { ...defaultState, ...savedState };
   } catch (error) {
     console.error('Failed to read window state:', error);
   }
-  return defaultState;
+  // the saved spot only while it is on a connected screen (a monitor that was unplugged would open the window out of sight)
+  try {
+    const { screen } = require('electron');   // usable here: windows are only created once the app is ready
+    state = clampToDisplay(state, screen.getAllDisplays().map(d => d.workArea), screen.getPrimaryDisplay().workArea);
+  } catch (error) { /* no screen information: as saved */ }
+  return state;
 }
 
 function saveWindowState(window) {
@@ -495,7 +495,7 @@ function saveWindowState(window) {
     const isMaximized = window.isMaximized();
     // getNormalBounds saves the width/height the window falls back to when un-maximized
     const bounds = window.getNormalBounds(); 
-    fs.writeFileSync(windowStateFilePath, JSON.stringify({ ...bounds, isMaximized }, null, 2));
+    writeJsonAtomic(windowStateFilePath, { ...bounds, isMaximized }, { pretty: true });
   } catch (error) {
     console.error('Failed to save window state:', error);
   }
@@ -518,6 +518,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // closed to the tray the page is hidden, and Chromium would slow its timers to about one a minute: automatic rune import on
+      // lock-in (workflow.js polls champion select every 1.5 s), Live Tracking and the mini window's rows must keep their pace
+      backgroundThrottling: false,
     },
   });
 
@@ -529,22 +532,25 @@ function createWindow() {
   });
 
   // Links (Builds / ARAM / Profile source links) open in the system browser. A child window would inherit preload.js and
-  // give the remote page window.electronAPI, so no in-app windows and no navigating away from the app's own file.
+  // give the remote page window.electronAPI, so no in-app windows and no navigating away from the app's own file: any other
+  // file:// page (a file dropped on the window, say) is refused too, since it would replace the app and get preload.js.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://')) {
-      event.preventDefault();
-      if (/^https:\/\//i.test(url)) shell.openExternal(url);
-    }
+  const ownPages = [path.join(__dirname, 'index.html')];
+  mainWindow.webContents.on('will-navigate', (event, legacyUrl) => {
+    const url = (event && event.url) || legacyUrl;   // (the second argument is deprecated in Electron 43)
+    if (isOwnPage(url, ownPages)) return;
+    event.preventDefault();
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
   });
 
-  // If it was maximized when last closed (or if it's the first launch), maximize it now (not while starting hidden in the tray)
-  if (windowState.isMaximized && mainWindow.isVisible()) {
-    mainWindow.maximize();
-  }
+  // If it was maximized when last closed (or if it's the first launch), maximize it now; when it starts hidden in the tray
+  // ("Start with Windows"), the first time it is shown (maximize() would show it at once)
+  maximizeWhenShown(mainWindow, windowState.isMaximized);
+  let everShown = mainWindow.isVisible();
+  mainWindow.once('show', () => { everShown = true; });
   createWindow.shownOnce = true;
   if (trayApp.attach) trayApp.attach(mainWindow);
 
@@ -562,8 +568,9 @@ function createWindow() {
   mainWindow.on('maximize', debouncedSave);
   mainWindow.on('unmaximize', debouncedSave);
   
-  // Also save reliably right before it closes
-  mainWindow.on('close', () => saveWindowState(mainWindow));
+  // Also save reliably right before it closes (not a window that was never shown: quitting from the tray after a hidden start
+  // would save its un-maximized hidden state over the real one)
+  mainWindow.on('close', () => { if (everShown) saveWindowState(mainWindow); });
   mainWindowRef = mainWindow;
   mainWindow.on('closed', () => { mainWindowRef = null; miniWindow.close(); }); // the mini window never outlives the app
 }

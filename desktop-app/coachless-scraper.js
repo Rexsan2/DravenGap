@@ -344,6 +344,9 @@ async function scrapeChampionRole(opts) {
     const spellBody = { commonFilters: cf, pairedSpell: null };
     // Bulk: spells first, so a role without games costs one request. On demand (opts.parallel): everything at once, like the site.
     const spellsP = client.call('POST', '/ChampionWinprob/GetGlobalSummonerSpellStatistics', spellBody).then(normSpells);
+    // (in parallel mode spellsP is awaited only after the other calls: if they fail first, its own rejection must not go unhandled;
+    // the later `await spellsP` still sees it)
+    spellsP.catch(() => {});
     let spells = opts.parallel ? null : await spellsP;
     if (spells && !spells.length) {
         await sleep(2000, signal);

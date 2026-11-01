@@ -32,6 +32,7 @@
 #aram-root .aram-row { display: grid; grid-template-columns: 36px 1fr 40px 62px 52px; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; position: relative; }
 #aram-root .aram-row:hover { background: var(--bg-primary); } #aram-root .aram-row.sel { border-color: var(--accent-color); background: var(--bg-primary); }
 #aram-root .aram-row .aram-x { position: absolute; right: -2px; top: -2px; background: var(--bg-primary); color: var(--red-neg); border: 1px solid var(--border-color); border-radius: 50%; width: 16px; height: 16px; line-height: 12px; padding: 0; cursor: pointer; font-size: 12px; }
+#aram-root .aram-row .aram-x.aram-add { color: var(--green-pos); }
 #aram-root .aram-champ { width: 34px; height: 34px; border-radius: 6px; } #aram-root .aram-champ.lg { width: 52px; height: 52px; border-radius: 8px; }
 #aram-root .aram-name { font-size: 0.9rem; min-width: 0; } #aram-root .aram-sub { color: var(--text-secondary); font-size: 0.72rem; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; font-weight: normal; }
 #aram-root .aram-role { text-transform: capitalize; }

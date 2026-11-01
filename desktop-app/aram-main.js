@@ -10,7 +10,8 @@
 //   aram:cache-info    {}                     -> what is cached (for diagnostics)
 //   aram:cache-clear   {}                     -> { ok, removed } drops the cache (Settings > Diagnostics)
 // Every data channel answers { ok:true, data, fetchedAt, stale, error? } or { ok:false, code, error }.
-// Push event: 'aram:updated' { kind, key, fetchedAt } after a background refresh replaced stale cache data.
+// Push event: 'aram:updated' { kind, key, fetchedAt } after a background refresh replaced stale cache data, or
+// { kind, key, error } when that refresh failed (the stale copy stays).
 //
 // Network etiquette: fetched only when asked for (no crawling), at most 2 requests in flight per host, an honest User-Agent,
 // and a disk cache (userData/aram-cache/*.json.gz, TTL 6 h). A cached entry is served at once; when it is older than the TTL it
@@ -51,9 +52,10 @@ function release(host) {
     if (next) next(); else h.active--;
 }
 
-// A failed fetch (429 / network / HTTP error) is not retried for a while: per URL, honoring Retry-After.
+// A failed fetch (429 / network / HTTP error) is not retried for a while: per URL, honoring Retry-After. A 429 also pauses the
+// whole host (key 'host:<host>'), so a prefetch of several champions stops at the first one the site refuses.
 const BACKOFF_MS = 60000;
-const backoff = new Map();   // url -> { until, error }
+const backoff = new Map();   // url | 'host:<host>' -> { until, error }
 
 function httpGet(url, redirects = 3) {
     return new Promise((resolve, reject) => {
@@ -79,16 +81,23 @@ function httpGet(url, redirects = 3) {
 
 async function fetchPage(url) {
     const host = new URL(url).host;
-    const bo = backoff.get(url);
-    if (bo && bo.until > Date.now()) throw Object.assign(new Error(bo.error.message + ' (not retrying yet)'), { code: bo.error.code });
+    const held = () => [backoff.get(url), backoff.get('host:' + host)].find(b => b && b.until > Date.now());
+    const wait = bo => Object.assign(new Error(bo.error.message + ' (not retrying yet)'), { code: bo.error.code });
+    let bo = held();
+    if (bo) throw wait(bo);
     await acquire(host);
     try {
+        if ((bo = held())) throw wait(bo);   // the host answered 429 while this request waited for a slot
         let r;
         const fail = (err, ms = BACKOFF_MS) => { backoff.set(url, { until: Date.now() + ms, error: err }); return err; };
         try { r = await httpGet(url); }
         catch (e) { throw fail(Object.assign(new Error('Network error: ' + e.message), { code: 'NETWORK' })); }
         if (r.status === 404) throw Object.assign(new Error('Page not found (404)'), { code: 'NOT_FOUND' });
-        if (r.status === 429) throw fail(Object.assign(new Error('Rate limited by the site (429); try again later'), { code: 'RATE_LIMITED' }), Math.max(BACKOFF_MS, r.retryAfter * 1000));
+        if (r.status === 429) {
+            const ms = Math.max(BACKOFF_MS, r.retryAfter * 1000), err = Object.assign(new Error('Rate limited by the site (429); try again later'), { code: 'RATE_LIMITED' });
+            backoff.set('host:' + host, { until: Date.now() + ms, error: err });
+            throw fail(err, ms);
+        }
         if (r.status !== 200) throw fail(Object.assign(new Error('HTTP ' + r.status), { code: 'HTTP_' + r.status }));
         backoff.delete(url);
         return r.text;
@@ -153,7 +162,8 @@ function createLoader(cache, notify) {
         const age = hit ? Date.now() - hit.fetchedAt : Infinity;
         if (hit && !force && age < TTL_MS) return { ok: true, data: hit.data, fetchedAt: hit.fetchedAt, stale: false };
         if (hit && !force) {
-            refresh(key, kind, produce).then(e => notify && notify({ kind, key, fetchedAt: e.fetchedAt }), () => { /* keep serving the stale copy */ });
+            // keep serving the stale copy; a failed refresh is pushed too, so the view stops saying "refreshing"
+            refresh(key, kind, produce).then(e => notify && notify({ kind, key, fetchedAt: e.fetchedAt }), err => notify && notify({ kind, key, error: (err && err.message) || String(err) }));
             return { ok: true, data: hit.data, fetchedAt: hit.fetchedAt, stale: true };
         }
         try {
@@ -189,13 +199,16 @@ function createLcu(deps) {
     }
     // Loading screen / in game: champ select is over, but the gameflow session lists every player's champion with their
     // puuid (gameData.playerChampionSelections, checked against a live Mayhem game), so the view can keep showing yours.
+    // The puuid is remembered, and read again when no player matches it (another account logged in since).
     let myPuuid = null;
     async function inGameState(phase) {
         const flow = await get('/lol-gameflow/v1/session').catch(() => null);
         const g = (flow && flow.gameData) || {};
         const queue = g.queue || {};
-        if (!myPuuid) { const me = await get('/lol-summoner/v1/current-summoner').catch(() => null); myPuuid = me && me.puuid; }
-        const sel = (g.playerChampionSelections || []).find(p => myPuuid && p.puuid === myPuuid);
+        const players = g.playerChampionSelections || [];
+        const find = () => players.find(p => myPuuid && p.puuid === myPuuid);
+        let sel = find();
+        if (!sel && (!myPuuid || players.length)) { const me = await get('/lol-summoner/v1/current-summoner').catch(() => null); if (me && me.puuid) myPuuid = me.puuid; sel = find(); }
         const queueId = typeof queue.id === 'number' ? queue.id : null;
         const isMayhem = queueId === 2400 || queue.gameMode === 'KIWI';
         return {

@@ -1,7 +1,8 @@
 // Replay review: download / open a game's replay from the League client and jump the replay to a moment (a death, a fight).
 // Registers 'lcu:replay-*' channels.
-//   lcu:replay-state  ({gameId})            -> { ok, state: 'watch'|'download'|'downloading'|'incompatible'|'missingOrExpired'|..., apiEnabled, running }
-//   lcu:replay-open   ({gameId})            -> starts the download if needed, then opens the replay in the client
+//   lcu:replay-state  ({gameId})            -> { ok, state: 'watch'|'download'|'downloading'|'incompatible'|'missingOrExpired'|..., apiEnabled,
+//                                              running: THIS game's replay, opened from here, is open now }
+//   lcu:replay-open   ({gameId})            -> starts the download if needed (waits while it is checked or downloaded), then opens the replay
 //   lcu:replay-seek   ({time, player?})     -> jumps the running replay to `time` (seconds) and follows `player` (name) if given
 //   lcu:replay-enable-api ()                -> turns on the game's local Replay API (game.cfg: [General] EnableReplayApi=1), asked for
 //                                              by the user with a button; needed once, before a replay can be moved from here
@@ -45,12 +46,15 @@ function register({ ipcMain, getLeagueCredentials, lcuRequest }) {
     }
     const apiOn = file => { try { return /^\s*EnableReplayApi\s*=\s*1\s*$/mi.test(fs.readFileSync(file, 'utf8')); } catch (e) { return false; } };
 
+    // `running` is per game: the Replay API answers for whichever replay is open, so it counts only for the game this app last opened
+    // (a replay the user closed, or another game's, is opened again instead of being moved)
+    let openedId = null;
     ipcMain.handle('lcu:replay-state', (e, req) => withClient(async creds => {
         const id = gid(req && req.gameId);
         if (!id) return { ok: false, error: 'No game id.' };
         const m = await lcuSend(creds, 'GET', `/lol-replays/v1/metadata/${id}`);
         const file = await gameCfg(creds);
-        const running = (await replayApi('GET', '/replay/playback')).status === 200;
+        const running = openedId === id && (await replayApi('GET', '/replay/playback')).status === 200;
         return { ok: m.status === 200, state: m.json && m.json.state || 'unknown', progress: m.json && m.json.downloadProgress, apiEnabled: file ? apiOn(file) : false, running };
     }));
 
@@ -59,18 +63,18 @@ function register({ ipcMain, getLeagueCredentials, lcuRequest }) {
         if (!id) return { ok: false, error: 'No game id.' };
         let m = await lcuSend(creds, 'GET', `/lol-replays/v1/metadata/${id}`);
         let state = m.json && m.json.state;
-        if (state === 'download') {
-            await lcuSend(creds, 'POST', `/lol-replays/v1/rofls/${id}/download`, COMPONENT);
-            for (let i = 0; i < 90; i++) {   // up to ~3 minutes
-                await new Promise(r => setTimeout(r, 2000));
-                m = await lcuSend(creds, 'GET', `/lol-replays/v1/metadata/${id}`);
-                state = m.json && m.json.state;
-                if (state !== 'downloading' && state !== 'download') break;
-            }
+        // still being checked or downloaded (a second click), or to download: wait for it, asking for the download once
+        let asked = false;
+        for (let i = 0; i < 90 && ['checking', 'download', 'downloading'].includes(state); i++) {   // up to ~3 minutes
+            if (state === 'download' && !asked) { asked = true; await lcuSend(creds, 'POST', `/lol-replays/v1/rofls/${id}/download`, COMPONENT); }
+            await new Promise(r => setTimeout(r, 2000));
+            m = await lcuSend(creds, 'GET', `/lol-replays/v1/metadata/${id}`);
+            state = m.json && m.json.state;
         }
         if (state !== 'watch') return { ok: false, state, error: state === 'incompatible' || state === 'missingOrExpired' ? 'This replay is from an older patch or has expired: the client only keeps replays of the current patch.' : `The replay is not available (${state || 'unknown'}).` };
         const w = await lcuSend(creds, 'POST', `/lol-replays/v1/rofls/${id}/watch`, COMPONENT);
-        return w.status >= 200 && w.status < 300 ? { ok: true } : { ok: false, error: `The client did not open the replay (${w.status}).` };
+        if (w.status >= 200 && w.status < 300) { openedId = id; return { ok: true }; }
+        return { ok: false, error: `The client did not open the replay (${w.status}).` };
     }));
 
     ipcMain.handle('lcu:replay-seek', async (e, req) => {

@@ -12,12 +12,14 @@ const unescape = s => String(s).replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) 
 });
 const text = h => unescape(String(h).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 
-// attributes where a smaller number is better for the champion
-const LOWER_BETTER = /cooldown|\bcost\b|cast time|wind-?up|delay|recharge|lockout|charge time|channel(?:ing)? (?:time|duration)|self[- ]damage|damage taken|penalty|refund threshold|time to/i;
+// attributes where a smaller number is better for the champion ("Cooldown Refund" / "Cooldown Reduction" are amounts given back: higher is better)
+const LOWER_BETTER = /cooldown(?!\s*(?:refund|reduction))|\bcost\b|cast time|wind-?up|delay|recharge|lockout|charge time|channel(?:ing)? (?:time|duration)|self[- ]damage|damage taken|penalty|refund threshold|time to/i;
 const BUFF_WORDS = /\b(buffs?|buffing|buffed|compensat\w*|weak\w*|lagging|struggl\w*|underperform\w*|more power|stronger|power ?up|bring \w+ up)\b/gi;
 const NERF_WORDS = /\b(nerfs?|nerfing|nerfed|too strong|too much|too reliable|too oppressive|too dominant|dominant|oppressive|overperform\w*|tone \w* ?down|toning \w* ?down|harder|over-?tuned|frustrat\w*)\b/gi;
 
-const nums = s => (String(s).match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+// The numbers of one side of a change line. A hyphen or dash between two numbers is a range ("40-200", "levels 1-18", "+0-9%"),
+// not a minus sign, and ".55" is 0.55.
+const nums = s => (String(s).replace(/(\d)\s*[-–]\s*(?=\.?\d)/g, '$1 ').match(/-?(?:\d+(?:\.\d+)?|\.\d+)/g) || []).map(Number);
 
 // +1 better, -1 worse, 0 unclear
 function lineDirection(attr, before, after) {

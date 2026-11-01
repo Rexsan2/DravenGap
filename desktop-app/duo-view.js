@@ -19,7 +19,7 @@
     const POS_ROLE = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', MID: 'MIDDLE', BOTTOM: 'BOTTOM', BOT: 'BOTTOM', UTILITY: 'SUPPORT', SUPPORT: 'SUPPORT' };
     const ROLE_POS = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', BOTTOM: 'BOTTOM', SUPPORT: 'UTILITY' };
     const DUO_OF = { BOTTOM: 'SUPPORT', SUPPORT: 'BOTTOM', JUNGLE: 'MIDDLE', MIDDLE: 'JUNGLE', TOP: 'JUNGLE' };
-    const RIOT_ID = /^(.{3,16}?)\s*#\s*([A-Za-z0-9]{2,5})$/;
+    const RIOT_ID = /^(.{3,16}?)\s*#\s*([\p{L}\p{N}]{2,5})$/u;     // taglines can use any letters (Korean, Japanese, ...)
     const POOL_MIN_GAMES = 3, POOL_MIN_MASTERY = 20000;     // the same rule as My pool in the draft
     const S = { partner: null, partnerSrc: '', roleA: null, roleB: null, poolA: true, poolB: true, detected: null, played: [], owner: null, ownerPuuid: null,
         hist: null, histKey: '', data: null, sig: '', busy: false, rerun: false, timer: null, typed: '', typedNote: '', userRoles: false, pinfo: {}, relaxed: null };
@@ -79,9 +79,9 @@
             if (S.roleB === S.roleA) S.roleB = DUO_OF[S.roleA];
         }
     }
+    // "tried" only once your account is known: with no account yet (client not running) the next show() asks again
     async function loadPlayed() {
         if (S.played.length || S.playedTried) return;
-        S.playedTried = true;
         const o = await owner();
         if (!o) return;
         if (!S.ownerPuuid) {
@@ -89,6 +89,7 @@
             if (!look || !look.ok) return;
             S.ownerPuuid = look.profile.puuid;
         }
+        S.playedTried = true;
         const r = await api.invoke('profile:played', { puuid: S.ownerPuuid, platform: o.platform, group: 'all' }).catch(() => null);
         S.played = r && r.ok ? r.list : [];
     }
@@ -97,7 +98,10 @@
         if (!key || S.histKey === key) return;
         S.histKey = key; S.hist = { loading: true };
         const o = await owner();
-        const r = o ? await api.invoke('profile:duo-history', { owner: S.ownerPuuid ? { puuid: S.ownerPuuid } : o, partner: { gameName: S.partner.gameName, tagLine: S.partner.tagLine } }).catch(e => ({ ok: false, error: e.message }))
+        // the partner's puuid, so games under an older Riot ID count: a partner from "games together" carries it; a lobby or typed
+        // partner gets it from that list when the same Riot ID is in it (else none: main matches the name#tag only)
+        const known = (S.played || []).find(p => partnerKey({ gameName: p.name, tagLine: p.tag }) === key), puuid = S.partner.puuid || (known && known.puuid) || undefined;
+        const r = o ? await api.invoke('profile:duo-history', { owner: S.ownerPuuid ? { puuid: S.ownerPuuid } : o, partner: { gameName: S.partner.gameName, tagLine: S.partner.tagLine, puuid } }).catch(e => ({ ok: false, error: e.message }))
             : { ok: false, error: 'No account: start the League client or set your Riot ID in Settings.' };
         if (S.histKey === key) S.hist = r;
     }
@@ -154,13 +158,18 @@
     }
 
     function boardSig() { return [...document.querySelectorAll('.role-slot')].map(s => s.dataset.champion || s.dataset.hover || '-').join(','); }
+    // the draft's data selection: Time Period, Rank, Min Games and Borrow strength (DD.duoPairs reads them), so changing one recomputes
+    const filterSig = () => [['time-period-select', 'value'], ['rank-select', 'value'], ['min-games-filter', 'value'], ['borrow-strength-toggle', 'checked']]
+        .map(([id, k]) => { const c = document.getElementById(id); return c ? c[k] : ''; }).join(',');
+    const RETRY_MS = 10000;   // no draft data for the selection: tried again this often while the tab is open
     async function compute(force) {
         if (S.busy) { if (force) S.rerun = true; return; }
+        if (S.retryAt && Date.now() >= S.retryAt) { S.retryAt = 0; S.sig = ''; }
         const mp = DD.myPool && DD.myPool();
         const pi = S.partner && S.pinfo[partnerKey(S.partner)];
-        const sig = [boardSig(), S.roleA, S.roleB, S.poolA, S.poolB, partnerKey(S.partner), S.hist && S.hist.games, mp ? mp.length : -1, pi ? pi.state : ''].join('|');
+        const sig = [boardSig(), S.roleA, S.roleB, S.poolA, S.poolB, partnerKey(S.partner), S.hist && S.hist.games, mp ? mp.length : -1, pi ? pi.state : '', filterSig()].join('|');
         if (!force && sig === S.sig) return;
-        S.busy = true; S.sig = sig;
+        S.busy = true; S.sig = sig; S.retryAt = 0;
         try {
             await loadHistory();
             startPartnerLookup();
@@ -171,6 +180,8 @@
                 const all = await DD.duoPairs({ roleA: S.roleA, roleB: S.roleB });
                 if (all && all.pairs.length) { S.relaxed = { a: data.candidatesA, b: data.candidatesB, poolA: !!poolA, poolB: !!poolB }; data = all; }
             }
+            // null = the dataset of this Time Period and Rank could not be read (offline, not downloaded): say so, and try again later
+            if (!data) { data = { error: 'No draft data for this Time Period and Rank yet (it may still be loading, or need a download in Settings > Data).' }; S.retryAt = Date.now() + RETRY_MS; }
             S.data = data;
         } catch (e) { S.data = { error: e.message }; }
         S.busy = false;
@@ -199,7 +210,7 @@
         const d = S.data, h = S.hist, partners = (S.detected && S.detected.partners) || [];
         const opts = [];
         for (const p of partners) opts.push({ p, src: 'lobby', label: `${p.gameName}#${p.tagLine} · in your lobby${p.assigned ? ' (' + (ROLE_LABEL[roleOf(p.assigned)] || p.assigned) + ')' : ''}` });
-        for (const p of S.played) if (!opts.some(o => partnerKey(o.p) === partnerKey({ gameName: p.name, tagLine: p.tag }))) opts.push({ p: { gameName: p.name, tagLine: p.tag }, src: 'played', label: `${p.name}#${p.tag} · ${p.games} games together (${p.wr}%)` });
+        for (const p of S.played) if (!opts.some(o => partnerKey(o.p) === partnerKey({ gameName: p.name, tagLine: p.tag }))) opts.push({ p: { gameName: p.name, tagLine: p.tag, puuid: p.puuid }, src: 'played', label: `${p.name}#${p.tag} · ${p.games} games together (${p.wr}%)` });
         if (S.partner && !opts.some(o => partnerKey(o.p) === partnerKey(S.partner))) opts.push({ p: S.partner, src: S.partnerSrc, label: `${S.partner.gameName}#${S.partner.tagLine}` });
         S.opts = opts;
         const cur = opts.findIndex(o => partnerKey(o.p) === partnerKey(S.partner));
@@ -307,16 +318,33 @@
         if (e.target.closest && e.target.closest('[data-duo="use"]')) applyTyped();
     });
 
+    // The 2.5 s refresh runs while the Duo tab is the draft's tab. Another draft tab stops it (its button calls show() again); another
+    // view only pauses it, so coming back to the draft follows the picks, bans and lobby again without clicking the tab.
+    const duoTabOn = () => el.style.display !== 'none' && (!DD.draftTab || DD.draftTab() === 'duo');
     async function show() {
         clearInterval(S.timer);
         render();
         await Promise.all([detect(), loadPlayed()]);
         render();
         await compute(true);
+        clearInterval(S.timer);
         S.timer = setInterval(async () => {
-            if (el.style.display === 'none' || DD.currentView() !== 'draft') { clearInterval(S.timer); S.timer = null; return; }
+            if (!duoTabOn()) { clearInterval(S.timer); S.timer = null; return; }
+            if (DD.currentView() !== 'draft') return;
             await detect(); compute(false);
         }, 2500);
     }
+    DD.onView(name => { if (name === 'draft' && S.timer && duoTabOn()) detect().then(() => compute(false)); });
+    // Time Period / Rank / Min Games / Borrow strength changed while the tab is open: recompute now (compute's signature has them too)
+    for (const [id, evName] of [['time-period-select', 'change'], ['rank-select', 'change'], ['min-games-filter', 'input'], ['borrow-strength-toggle', 'change']]) {
+        const c = document.getElementById(id);
+        if (c) c.addEventListener(evName, () => { if (S.timer && duoTabOn() && DD.currentView() === 'draft') setTimeout(() => compute(false), 0); });
+    }
+    // a game of yours was saved in Profile: the players you often play with and your games together are read again
+    api.on('profile:update', ev => {
+        if (!ev || ev.kind !== 'matches' || !(ev.owner || (S.ownerPuuid && ev.puuid === S.ownerPuuid))) return;
+        S.played = []; S.playedTried = false; S.histKey = '';
+        if (S.timer && duoTabOn() && DD.currentView() === 'draft') loadPlayed().then(() => { render(); compute(true); });
+    });
     window.DDDuo = { show, state: S, compute, render };
 })();

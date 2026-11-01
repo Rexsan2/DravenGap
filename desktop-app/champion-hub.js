@@ -36,14 +36,20 @@
             <div class="ch-head" id="ch-head"></div>
             <div class="ch-tabs" id="ch-tabs" role="tablist"></div>
             <div class="ch-body" id="ch-body"></div></div>`;
-        // the only champion the text can mean opens as you type ("qi" = Qiyana); an exact name that starts others ("Vi": Viego,
-        // Viktor) opens from the dropdown or on Enter. Deleting never opens anything.
-        const pick = (el, typing) => { const c = DD.uniqueChampion && DD.uniqueChampion(el.value, undefined, { typing }); if (c) { el.value = ''; open(c.id, null); } };
-        root.querySelector('#ch-search').addEventListener('input', e => {
-            if (/^delete/.test(e.inputType || '')) return;
-            pick(e.target, /^insert/.test(e.inputType || '') && e.inputType !== 'insertReplacementText' && e.inputType !== 'insertFromPaste');
+        // the only champion the text can mean opens as you type ("qi" = Qiyana) and the box completes the name inline
+        // (DD.completeChampion), so typing the rest of the name never hops to another champion. An exact name that starts others
+        // ("Vi": Viego, Viktor) opens from the dropdown, on Enter or when leaving the box; those also clear the box. Deleting never opens.
+        const box = root.querySelector('#ch-search');
+        const commit = c => { if (!c) return; box.value = ''; if (c.id !== S.champ) open(c.id, null); };
+        box.addEventListener('input', e => {
+            const c = DD.completeChampion && DD.completeChampion(e.target, undefined, e);
+            if (!c) return;
+            const t = e.inputType || '';
+            if (t === 'insertReplacementText' || t === 'insertFromPaste') commit(c);
+            else if (c.id !== S.champ) open(c.id, null);
         });
-        root.querySelector('#ch-search').addEventListener('keydown', e => { if (e.key === 'Enter') pick(e.target, false); });
+        box.addEventListener('keydown', e => { if (e.key === 'Enter') commit(DD.uniqueChampion && DD.uniqueChampion(e.target.value)); });
+        box.addEventListener('change', () => commit(DD.uniqueChampion && DD.uniqueChampion(box.value)));
         root.addEventListener('click', onClick);
         root.addEventListener('change', onChange);
     }
@@ -56,8 +62,17 @@
         else if (S.tab === 'vs' && !S.vs) S.tab = 'overview';
         S.champ = champ; S.role = role || null; S.err = null;
         S.recent = [champ, ...S.recent.filter(x => x !== champ)].slice(0, 8);
-        DD.patchSettings({ hubRecent: S.recent, hubLast: { champ, role: S.role } }).catch(() => {});
+        DD.patchSettings({ hubRecent: S.recent }).catch(() => {});
         await load();
+    }
+    // the page a restart reopens: written once the role is final (the most played one when none was asked for, or the role button
+    // clicked last), and only when it changed
+    let lastSaved = '';
+    function saveLast() {
+        const k = `${S.champ}|${S.role || ''}`;
+        if (!S.champ || k === lastSaved) return;
+        lastSaved = k;
+        DD.patchSettings({ hubLast: { champ: S.champ, role: S.role || null } }).catch(() => {});
     }
     async function load() {
         const seq = ++S.seq;
@@ -67,6 +82,7 @@
         if (seq !== S.seq) return;
         S.loading = false; S.data = d;
         if (d && d.role) S.role = d.role;
+        saveLast();
         paint();
         if (S.tab === 'builds') loadBuilds(); else if (S.tab === 'mine') loadMine(); else if (S.tab === 'aram') loadAram();
     }
@@ -146,7 +162,8 @@
         if (!S.mine) setTimeout(loadMine, 0);
         const oppKey = (champOf(opp) || {}).key, rec = S.mine && S.mine.ok && S.mine.vsOpp ? S.mine.vsOpp[oppKey] : null;
         const note = DD.matchupNote ? DD.matchupNote(S.champ, opp) : null;
-        return `<div class="ch-vs-head">${ico(S.champ, 'ch-img')}<b>${esc(mn)}</b><span class="ch-muted">vs</span>${ico(opp, 'ch-img')}<b>${esc(on)}</b>
+        // data-hub-role: a click on either picture keeps this lane (app-shell.js opens that champion's page in the role it finds here)
+        return `<div class="ch-vs-head" data-hub-role="${esc(S.role || '')}">${ico(S.champ, 'ch-img')}<b>${esc(mn)}</b><span class="ch-muted">vs</span>${ico(opp, 'ch-img')}<b>${esc(on)}</b>
                 <span class="ch-muted">${ROLE_LABEL[S.role]} · ${esc(d.label)}</span>
                 <button class="ch-btn" data-swap="1" title="The same matchup from ${esc(on)}'s side">Swap sides ⇄</button></div>
             <div class="ch-grid">
@@ -185,7 +202,8 @@
         const cards = ROLES.filter(r => r !== S.role).map(r => {
             const l = common(d.synergies[r] || []).slice().sort((a, b) => b.mean - a.mean);
             const duo = (S.role === 'BOTTOM' && r === 'SUPPORT') || (S.role === 'SUPPORT' && r === 'BOTTOM');
-            return `<div class="ch-card"><div class="ch-card-h">With ${ROLE_LABEL[r]}${duo ? ' <span class="ch-tag">duo</span>' : r === 'JUNGLE' || S.role === 'JUNGLE' ? ' <span class="ch-tag">jungle</span>' : ''}</div>
+            // teammates use the duo prior for Bot + Support and the plain ally prior otherwise (the jungle class is for enemies only)
+            return `<div class="ch-card"><div class="ch-card-h">With ${ROLE_LABEL[r]}${duo ? ' <span class="ch-tag">duo</span>' : ''}</div>
                 <table class="ch-table compact">${pairHead('Partner', 'with')}<tbody>${l.slice(0, 6).map(x => pairRow({ ...x, role: r }, 'with')).join('') || '<tr><td colspan="7" class="ch-muted">Not enough games.</td></tr>'}</tbody></table></div>`;
         }).join('');
         return `<div class="ch-controls"><label><input type="checkbox" data-opt="common"${S.common ? ' checked' : ''}> Common partners only (played in 1%+ of that role's games)</label></div>
@@ -193,8 +211,14 @@
     }
 
     // ------------------------------------------------------------------------------------------------ Builds tab
+    // The summary follows the Time Period (Coachless data is Emerald+ and per patch, so the Rank does not change it): the period is
+    // part of the key, so a change made in any view is picked up the next time the tab is drawn.
+    const buildsKey = () => { const tp = document.getElementById('time-period-select'); return `${S.champ}|${S.role}|${(tp && tp.value) || 'patch'}`; };
+    // "16.17–16.20 · 16.19 missing": the patches the period covers as one range, plus the ones with no saved data for this champion
+    const rangeOf = list => (DD.patchLabels && DD.patchLabels.range ? DD.patchLabels.range(list || []) : (list || []).join(', '));
+    const patchSpan = b => rangeOf(b.patches) + (DD.patchLabels && DD.patchLabels.missingNote && Array.isArray(b.missing) ? DD.patchLabels.missingNote(b.missing) : '');
     async function loadBuilds() {
-        const key = `${S.champ}|${S.role}`;
+        const key = buildsKey();
         if (S.builds && S.builds.key === key) return;
         S.builds = { key, loading: true }; paint();
         let r = null;
@@ -205,12 +229,12 @@
     }
     function buildsHtml() {
         const b = S.builds;
-        if (!b || b.loading) { setTimeout(loadBuilds, 0); return '<div class="ch-empty">Reading saved builds…</div>'; }
+        if (!b || b.loading || b.key !== buildsKey()) { setTimeout(loadBuilds, 0); return '<div class="ch-empty">Reading saved builds…</div>'; }
         if (b.error) return `<div class="ch-empty">${esc(b.error)}</div>`;
         const open = `<button class="ch-btn" data-act="builds">${b.saved ? 'Open the full builds' : 'Download in Builds'} ›</button>`;
-        if (!b.saved) return `<div class="ch-empty"><p>No Coachless data saved for ${esc(nameOf(S.champ))} ${ROLE_LABEL[S.role]} (${esc((b.patches || []).join(', ') || 'this patch')}). It is downloaded on demand, one champion and role at a time, when you open it in Builds.</p>${open}</div>`;
+        if (!b.saved) return `<div class="ch-empty"><p>No Coachless data saved for ${esc(nameOf(S.champ))} ${ROLE_LABEL[S.role]} (${esc(rangeOf(b.patches) || 'this patch')}). It is downloaded on demand, one champion and role at a time, when you open it in Builds.</p>${open}</div>`;
         const icon = (i, extra) => `<span class="ch-item" title="${esc(i.name)}${extra ? ' · ' + esc(extra) : ''}"><img src="${esc(i.img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">${i.wpa != null ? `<em class="${sign(i.wpa)}">${pts(i.wpa)}</em>` : ''}</span>`;
-        return `<div class="ch-controls"><span>${Math.round(b.games).toLocaleString()} Emerald+ games · patch${b.patches.length > 1 ? 'es' : ''} ${esc(b.patches.join(' + '))} · Coachless WPA ${help('wpa')}</span>${open}</div>
+        return `<div class="ch-controls"><span>${Math.round(b.games).toLocaleString()} Emerald+ games · patch${b.patches.length > 1 ? 'es' : ''} ${esc(patchSpan(b))} · Coachless WPA ${help('wpa')}</span>${open}</div>
             <div class="ch-cols">${b.groups.map(g => `<div class="ch-card"><div class="ch-card-h">${esc(g.title)}</div><div class="ch-items">${g.items.map(i => icon(i)).join('')}</div></div>`).join('')}
             ${b.keystone ? `<div class="ch-card"><div class="ch-card-h">Keystone</div><div class="ch-items">${icon(b.keystone, `taken in ${pct(b.keystone.pick, 0)} of games`)}</div><div class="ch-muted">${esc(b.keystone.name)}</div></div>` : ''}
             ${b.spells.length ? `<div class="ch-card"><div class="ch-card-h">Summoner spells</div><div class="ch-items">${b.spells.map(s => icon({ ...s, wpa: null }, `taken in ${pct(s.pick, 0)} of games`)).join('')}</div></div>` : ''}</div>
@@ -309,7 +333,7 @@
                 <div class="ch-muted">tier ${esc(e.tier)} · rank ${e.rank} of ${e.count} · ${d >= 0 ? '+' : ''}${d.toFixed(1)} vs the average</div>
                 <div class="ch-muted ch-foot">patch ${esc(e.patch || '?')} · arammayhem.com</div></div>
             ${['prismatic', 'gold', 'silver'].map(r => `<div class="ch-card"><div class="ch-card-h">${r[0].toUpperCase() + r.slice(1)} augments</div>${augs(r).map(x => `<div class="ch-kv"><span>${esc(x.name)}</span><b>${augVal(x)} <span class="ch-muted">${x.appearance == null ? '' : x.appearance.toFixed(1) + '% seen'}</span></b></div>`).join('') || `<div class="ch-muted">${c ? 'None listed.' : 'Not available.'}</div>`}</div>`).join('')}
-            <div class="ch-card"><div class="ch-card-h">Items <span class="ch-muted">LoLalytics, regular ARAM</span></div>${li && li.core ? `<div class="ch-items">${li.core.items.map(item).join('')}</div><div class="ch-muted">core build · ${li.core.wr.toFixed(1)}% WR in regular ARAM (not Mayhem)</div>` : '<div class="ch-muted">Not available.</div>'}</div>
+            <div class="ch-card"><div class="ch-card-h">Items <span class="ch-muted">LoLalytics, regular ARAM</span></div>${li && li.core ? `<div class="ch-items">${li.core.items.map(item).join('')}</div><div class="ch-muted">core build · ${li.core.wr == null ? '–' : li.core.wr.toFixed(1) + '%'} WR in regular ARAM (not Mayhem)</div>` : '<div class="ch-muted">Not available.</div>'}</div>
             </div><div class="ch-controls"><button class="ch-btn" data-act="aram">Open in ARAM Mayhem ›</button></div>`;
     }
 
@@ -356,8 +380,15 @@
     DD.onView((name, prev) => { if (name === 'champion' && prev !== 'champion' && S.champ && !S.loading) load(); else if (name === 'champion') paint(); });
     window.addEventListener('builds-updated', () => { if (S.builds) { S.builds = null; if (DD.currentView() === 'champion' && S.tab === 'builds') paint(); } });
     window.addEventListener('coach-updated', e => { if (DD.currentView() === 'champion' && S.tab === 'builds' && e.detail && e.detail.champ === S.champ) paint(); });
+    // a game of yours was saved in Profile (the post-game refresh): My stats and the matchup page's record are read again
+    if (api) api.on('profile:update', ev => {
+        if (!ev || ev.kind !== 'matches' || !S.mine) return;
+        if (!ev.owner && !(S.mine.acct && S.mine.acct.puuid && ev.puuid === S.mine.acct.puuid)) return;
+        S.mine = null;
+        if (DD.currentView() === 'champion' && (S.tab === 'mine' || S.tab === 'vs')) paint();
+    });
     (async () => {
-        try { const s = await window.electronAPI.getSettings(); if (s && Array.isArray(s.hubRecent)) S.recent = s.hubRecent.filter(x => typeof x === 'string').slice(0, 8); if (s && s.hubLast && !S.champ) { S.champ = s.hubLast.champ; S.role = s.hubLast.role || null; } } catch (e) { /* none */ }
+        try { const s = await window.electronAPI.getSettings(); if (s && Array.isArray(s.hubRecent)) S.recent = s.hubRecent.filter(x => typeof x === 'string').slice(0, 8); if (s && s.hubLast && !S.champ) { S.champ = s.hubLast.champ; S.role = s.hubLast.role || null; lastSaved = `${S.champ}|${S.role || ''}`; } } catch (e) { /* none */ }
         if (DD.currentView() === 'champion') { await DD.ready; if (S.champ) load(); else paint(); }
     })();
 

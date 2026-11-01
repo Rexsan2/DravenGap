@@ -81,7 +81,8 @@
         .role-slot.is-me .slot-tag { color: var(--yellow-warn); }
         .role-slot { width: 100%; aspect-ratio: 1 / 1; background-color: var(--bg-secondary); border: 2px dashed var(--border-color); border-radius: 8px; position: relative; cursor: pointer; transition: border-color 0.2s; overflow: hidden; }
         .role-slot.selected { border-color: var(--accent-color); border-style: solid; box-shadow: 0 0 10px rgba(96, 165, 250, 0.7); }
-        .role-slot.swap-source { border-color: var(--yellow-warn); border-style: solid; }
+        .role-slot.swap-source { border-color: var(--yellow-warn); border-style: solid; box-shadow: 0 0 0 2px var(--yellow-warn), 0 0 10px rgba(250, 204, 21, 0.6); }
+        .role-slot.is-me.swap-source { box-shadow: 0 0 0 3px var(--yellow-warn), 0 0 14px rgba(250, 204, 21, 0.85); }   /* your own (yellow) slot picked for a swap still shows a change */
         .role-icon { width: 50%; height: 50%; opacity: 0.4; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); filter: brightness(1.2); }
         .champion-portrait { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; pointer-events: none; }
         .champion-portrait.hovered { filter: grayscale(80%); }
@@ -97,6 +98,7 @@
         #champion-grid, #recommendation-list { -ms-overflow-style: none; scrollbar-width: none; }
         .champion-tile { cursor: pointer; position: relative; }
         .champion-tile.grid-selected img { border-color: var(--yellow-warn); }
+        .champion-tile.tile-refused img { border-color: var(--red-neg); filter: grayscale(80%); }   /* a banned champion clicked into a slot */
         .champion-tile img { width: 100%; display: block; border-radius: 4px; border: 2px solid transparent; transition: border-color 0.2s, filter 0.2s, opacity 0.2s; }
         .champion-tile:hover img { border-color: var(--accent-color); }
         #results { background-color: var(--bg-secondary); padding: 15px; border-radius: 8px; flex-grow: 1; display: flex; flex-direction: column; min-height: 0; border: 2px solid transparent; transition: border-color 0.3s, box-shadow 0.3s; }
@@ -522,12 +524,12 @@
                             <li><strong>P(best)</strong>: the chance it is the best of the available options. ≈ marks a statistical tie.</li>
                             <li><strong>Shrunk Δ</strong>: the draft effect, with small samples toned down. <strong>PP</strong>: how sure we are the pick truly helps.</li>
                             <li><strong>Base WR</strong>: the champion's overall win rate in that role. ▲/▼ after it is a real change since the previous saved patch.</li>
-                            <li><strong>You</strong>: how much better or worse than average you do on the champion (your own games), shown separately and not part of the other numbers.</li>
+                            <li><strong>For you</strong>: Exp WR adjusted for your own record on the champion and how familiar you are with it (see the glossary). Shown for your own team's slots only.</li>
                         </ul>
                     </li>
                     <li>On a row: <strong>why</strong> opens the breakdown (champion strength, every pairing with how much of it is kept, the draft effect, blind-pick risk, you) and a link to the champion's page. <strong>⚔</strong> opens its builds against your lane opponent. <strong>⚠</strong> means a common counter costs 3+ points while your lane opponent is still unknown.</li>
                     <li><strong>Details</strong> adds Rank, the raw Total Δ with its Lane / Ally / Enemy split, and Role Freq. Click any header to sort.</li>
-                    <li><strong>Filters</strong>: Min Base WR %, Min Role Freq %, Min Games and the search box. The search is for finding one champion: it clears itself when you pick from the list or choose another slot, and if it hides every row the list says so (with <strong>Clear search</strong>). No slot chosen yet (no client, or after a reset)? The list says to press the 💡 / SUGGEST of a slot. <strong>Favorites</strong> shows only starred champions (right-click a champion in the grid). <strong>My pool</strong> keeps only champions you play (3+ games in your history or 20,000+ mastery). <strong>Hovers</strong> counts champions teammates are only hovering.</li>
+                    <li><strong>Filters</strong>: Min Base WR %, Min Role Freq %, Min Games and the search box. The search is for finding one champion: it clears itself when you pick from the list or choose another slot, and if it hides every row the list says so (with <strong>Clear search</strong>). No slot chosen yet (no client, or after a reset)? The list says to press SUGGEST under a slot. <strong>Favorites</strong> shows only starred champions (right-click a champion in the grid). <strong>My pool</strong> keeps only champions you play (3+ games in your history or 20,000+ mastery). <strong>Hovers</strong> counts champions teammates are only hovering.</li>
                     <li><strong>Borrow strength from broader data</strong> (on by default): matchups with few games lean on a bigger dataset instead of on zero.</li>
                     <li>In champion select both teams are shown <strong>in pick order</strong> (#1 picks first; you are outlined in yellow). Each slot's tag is the lane the model uses: on your team that is the lane of the player who picked the champion, on the enemy team it is a guess from how often each champion is played in each role. Move a pick to correct it.</li>
                     <li><strong>Moving picks</strong>: click a filled slot, then another slot of the same team, to swap them. A swap <strong>locks</strong> both slots (🔒) so Live Tracking keeps your order instead of guessing roles again; click the 🔒 to hand a slot back to the automatic guess. A new game clears the locks.</li>
@@ -1019,11 +1021,15 @@
             const LCU_POSITION = { top: 'TOP', jungle: 'JUNGLE', middle: 'MIDDLE', bottom: 'BOTTOM', utility: 'SUPPORT' };
             let lastKnownDraftState = '';
             let lastKnownPickState = '';
+            let liveGameId = null;          // gameId of the champion select the board belongs to (a new one clears the role locks)
+            let livePollSeq = 0;            // Live Tracking polls in order: an older, slower answer never paints over a newer one
             let swapSourceSlot = null;
             let lastRecommendations =[];
+            let recForceShow = null;   // the one champion shown despite the search / Favorites / My pool (a "Best for you" pick outside them)
             let favorites = {};
             let unavailableChampions = new Set();
-            let pickableChampions = new Set();
+            let liveBans = new Set();        // Live Tracking: the champions banned in this champion select (part of unavailableChampions)
+            let liveUnowned = new Set();     // ...and the ones you can't pick (not owned, not free): they block only your own pick
             let lockedSlots = new Map();
             let activeTab = 'recommendations';
             let latestPatch = '';
@@ -1500,7 +1506,7 @@
                 if (!dev) return null;
                 return {
                     dataset: ref,
-                    label: `${periodLabel(refSpec.timePeriod)} / ${refSpec.rank}`,
+                    label: `${periodLabel(refSpec.timePeriod)} · ${RANKS[refSpec.rank] || refSpec.rank}`,
                     tau2_pooled: dev.pooled,
                     tau2_by_class: dev.byClass,
                     ref_tau2_pooled: dev.voPooled,
@@ -1593,6 +1599,7 @@
 
                     for (const [teamMember, relationship] of [[myTeam, 'teammate'], [enemyTeam, 'enemy']]) {
                         for (const [role, champ] of Object.entries(teamMember)) {
+                            if (relationship === 'teammate' && role === targetRole) continue; // the slot's own occupant is the one being replaced, not a partner
                             if (champ) {
                                 const partnerComboKey = `${champ},${role}`;
                                 if (!champion_ratings.has(partnerComboKey)) continue;
@@ -2010,6 +2017,20 @@
                 }
                 return out.sort((a, b) => comparePatchLabels(b, a));
             }
+            // Saved patches NEWER than the shared data's current patch (downloaded from LoLalytics on patch day, before the bucket has
+            // them), newest first. They are listed as their own 'p:' periods only: Last N, ranges and Adaptive keep drawing on the
+            // current patch and older ones, in order.
+            function newerSavedPatchesFor(rank) {
+                const cur = currentPatchLabel();
+                if (!cur) return [];
+                return [...archiveIndex.values()].filter(e => e.rank === rank && comparePatchLabels(e.patch, cur) > 0).map(e => e.patch).sort((a, b) => comparePatchLabels(b, a));
+            }
+            // Was a snapshot downloaded on this PC (source 'scraped', `at` = its time) after the shared bucket's run? Then it holds more
+            // of the patch than the bucket's file: acquireSnapshot keeps it and the freshness check does not count it as stale.
+            function scrapedAfterRun(at) {
+                const run = metadata && metadata.last_updated_utc;
+                return !!(at && run && parseRunDate(at) > parseRunDate(run));
+            }
             // Patch labels a period draws on for a rank (current patch first), or null if the period is not available for that rank
             function periodPatches(timePeriod, rank) {
                 const cur = currentPatchLabel();
@@ -2101,13 +2122,16 @@
             function rebuildTimePeriodOptions() {
                 const rank = rankSelect.value;
                 const prev = timePeriodSelect.value || lastTimePeriod;
-                const saved = savedPatchesFor(rank);
+                const saved = savedPatchesFor(rank), newer = newerSavedPatchesFor(rank);
                 const cur = currentPatchLabel();
                 const days = Object.keys(DAY_PERIODS).filter(tp => dayIndex.has(`${tp}|${rank}`));
                 let html = `<optgroup label="Live">${Object.entries(TIME_PERIODS).map(([val, name]) => `<option value="${val}">${name}${val === 'patch' && cur ? ` (${cur})` : ''}</option>`).join('')}` +
                     days.map(tp => `<option value="${tp}">${DAY_PERIODS[tp]} (downloaded)</option>`).join('') + `</optgroup>`;
+                if (saved.length || newer.length) {
+                    html += `<optgroup label="Saved patches">${newer.map(p => `<option value="p:${p}" title="Downloaded from LoLalytics on this PC; the shared data is still on ${cur}. The patch is still running, so download it again later for more games.">Patch ${p} (downloaded, newer than the shared data)</option>`).join('')}` +
+                        `${saved.map(p => `<option value="p:${p}">Patch ${p} (saved)</option>`).join('')}</optgroup>`;
+                }
                 if (saved.length) {
-                    html += `<optgroup label="Saved patches">${saved.map(p => `<option value="p:${p}">Patch ${p} (saved)</option>`).join('')}</optgroup>`;
                     const ap = periodPatches(ADAPTIVE_PERIOD, rank);
                     let combined = ap && ap.length > 1
                         ? `<option value="${ADAPTIVE_PERIOD}" title="Matchups and synergies pool every saved patch of the season up to ${patchRangeLabel(ap)} (they barely change between patches, so more games always help; only a champion rework cuts them off). Champion win rates lean on the current patch: older patches count by how much the meta has drifted since, and buffs and nerfs from the patch notes are corrected for. Checked against the next patch: clearly more accurate than the current patch alone.">Adaptive (more games, corrected for patches)</option>`
@@ -2147,6 +2171,8 @@
             //  'live'   : the rolling 30-day datasets. NOT archived: a 30-day window overlaps patches and its own earlier snapshots, so
             //             summing it into the archive would double count games. Least-recently-used entries are evicted beyond DS_LIVE_CAP_BYTES.
             //  'kv'     : last metadata.json (for offline start-up) and last-used times.
+            //  'cols'   : the columnar matchups of each archive / live record (see Columnar matchups), kept apart so listing those stores
+            //             reads only small records.
             // A cached entry is reused only if its last_updated_utc equals the one in the freshly fetched metadata.json (same scraper run).
             // Caveat (cannot be fixed on our side): the scraper falls back to the previous patch's data when the newest patch has no data yet,
             // but still writes the newest patch into metadata.patch, so an archive entry can briefly hold the previous patch's games.
@@ -2159,14 +2185,15 @@
                 if (dsDbPromise) return dsDbPromise;
                 dsDbPromise = new Promise((resolve, reject) => {
                     if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB unavailable')); return; }
-                    const req = indexedDB.open(DS_DB_NAME, 3);
-                    req.onupgradeneeded = () => { // v1 had archive/live/kv; v2 adds 'builds'; v3 adds 'matchups'. Only missing stores are created, so existing data is kept.
+                    const req = indexedDB.open(DS_DB_NAME, 4);
+                    req.onupgradeneeded = () => { // v1 had archive/live/kv; v2 adds 'builds'; v3 adds 'matchups'; v4 adds 'cols'. Only missing stores are created, so existing data is kept.
                         const db = req.result;
                         if (!db.objectStoreNames.contains('archive')) db.createObjectStore('archive', { keyPath: 'key' });
                         if (!db.objectStoreNames.contains('live')) db.createObjectStore('live', { keyPath: 'key' });
                         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
                         if (!db.objectStoreNames.contains('builds')) db.createObjectStore('builds', { keyPath: 'key' });
                         if (!db.objectStoreNames.contains('matchups')) db.createObjectStore('matchups', { keyPath: 'key' }); // Builds vs-records: 'patch|champion|role|vs'
+                        if (!db.objectStoreNames.contains('cols')) db.createObjectStore('cols', { keyPath: 'key' });         // columnar matchups of archive/live records (see dsPut)
                     };
                     req.onsuccess = () => {
                         const db = req.result;
@@ -2195,13 +2222,59 @@
             const dsGet = (store, key) => dsTx(store, 'readonly', tx => tx.objectStore(store).get(key));
             const dsKvGet = key => dsTx('kv', 'readonly', tx => tx.objectStore('kv').get(key));
             const dsKvSet = (key, value) => dsTx('kv', 'readwrite', tx => tx.objectStore('kv').put(value, key));
-            // Record summaries only (the Blob handles are not read)
+            // Record summaries only: Blobs are not read, and the columnar matchups sit in the 'cols' store. A record that still carries
+            // its cols inline (saved by an older version) is read in full this once and moved over in the background.
             async function dsList(store) {
                 const all = await dsTx(store, 'readonly', tx => tx.objectStore(store).getAll());
-                return all.map(r => ({ key: r.key, patch: r.patch, rank: r.rank, period: r.period, bytes: r.bytes || 0, totalGames: r.totalGames || 0, last_updated_utc: r.last_updated_utc, savedAt: r.savedAt, source: r.source }));
+                const inline = all.filter(r => r.cols).map(r => r.key);
+                if (inline.length) dsMoveColsOut(store, inline);
+                return all.map(r => ({ key: r.key, patch: r.patch, rank: r.rank, period: r.period, bytes: r.bytes || 0, totalGames: r.totalGames || 0, last_updated_utc: r.last_updated_utc, savedAt: r.savedAt, source: r.source, partial: !!r.partial }));
             }
-            async function dsPut(store, rec) {
-                await dsTx(store, 'readwrite', tx => tx.objectStore(store).put(rec));
+            // Columnar matchups (~31 bytes x ~1M pairs per snapshot) of an archive / live record are stored in 'cols' under
+            // `${store}:${key}` with a ref that the record names (colsRef). Arrays with another ref (a record replaced by code that
+            // doesn't know about them) are ignored. Older records keep them inline as `cols` until dsMoveColsOut moves them.
+            const colsKeyOf = (store, key) => `${store}:${key}`;
+            const newColsRef = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const hasColsStore = store => store === 'archive' || store === 'live';
+            async function dsGetCols(store, entry) {
+                if (entry.cols) return entry.cols;
+                if (!entry.colsRef) return null;
+                let c = null;
+                try { c = await dsGet('cols', colsKeyOf(store, entry.key)); } catch (e) { c = null; }
+                return c && c.ref === entry.colsRef ? c.cols : null;
+            }
+            const dsColsMoving = new Set();
+            function dsMoveColsOut(store, keys) {
+                for (const key of keys) {
+                    const id = colsKeyOf(store, key);
+                    if (dsColsMoving.has(id)) continue;
+                    dsColsMoving.add(id);
+                    dsSaveInBackground(dsTx([store, 'cols'], 'readwrite', tx => { // one record per transaction: one snapshot in memory at a time
+                        const os = tx.objectStore(store), q = os.get(key);
+                        q.onsuccess = () => {
+                            const r = q.result;
+                            if (!r || !r.cols) return;
+                            const ref = newColsRef();
+                            tx.objectStore('cols').put({ key: id, ref, cols: r.cols });
+                            delete r.cols; r.colsRef = ref;
+                            os.put(r);
+                        };
+                    }).finally(() => dsColsMoving.delete(id)));
+                }
+            }
+            // cols: the record's columnar matchups (archive / live), stored apart; without them, arrays saved for that key before are
+            // deleted, so a replaced record never picks up the previous record's matchups
+            async function dsPut(store, rec, cols) {
+                if (hasColsStore(store)) {
+                    const c = cols || rec.cols || null, r = Object.assign({}, rec);
+                    delete r.cols;
+                    if (c) r.colsRef = newColsRef(); else delete r.colsRef;
+                    await dsTx([store, 'cols'], 'readwrite', tx => {
+                        tx.objectStore(store).put(r);
+                        if (c) tx.objectStore('cols').put({ key: colsKeyOf(store, r.key), ref: r.colsRef, cols: c });
+                        else tx.objectStore('cols').delete(colsKeyOf(store, r.key));
+                    });
+                } else await dsTx(store, 'readwrite', tx => tx.objectStore(store).put(rec));
                 if (store === 'live') {
                     await dsTouch(rec.key);
                     await dsEvictLive(rec.key);
@@ -2220,13 +2293,14 @@
                 for (const e of list) {
                     if (total <= DS_LIVE_CAP_BYTES) break;
                     if (e.key === keepKey) continue;
-                    await dsTx('live', 'readwrite', tx => tx.objectStore('live').delete(e.key));
+                    await dsTx(['live', 'cols'], 'readwrite', tx => { tx.objectStore('live').delete(e.key); tx.objectStore('cols').delete(colsKeyOf('live', e.key)); });
                     delete used[e.key];
                     total -= e.bytes;
                 }
                 await dsKvSet('liveUsed', used);
             }
             async function dsClear(store) {
+                if (hasColsStore(store)) await dsTx('cols', 'readwrite', tx => tx.objectStore('cols').delete(IDBKeyRange.bound(`${store}:`, `${store};`, false, true)));   // every "<store>:…" key (";" follows ":")
                 await dsTx(store, 'readwrite', tx => tx.objectStore(store).clear());
                 if (store === 'live') await dsKvSet('liveUsed', {});
             }
@@ -2267,7 +2341,8 @@
             // A matchup table (~1M keys like '["Ahri","MIDDLE","Zed","MIDDLE","enemy"]') stored as typed arrays instead of gzip JSON:
             // IndexedDB returns typed arrays without any parsing, so a saved patch loads in a fraction of the JSON path
             // (decompress + JSON.parse + Map ~1.1 s per patch), and a patch range is pooled with array loops and turned into a Map
-            // ONCE instead of once per patch. Stored next to the gzip blobs as entry.cols; older entries are converted on first load.
+            // ONCE instead of once per patch. Stored beside the record in the 'cols' store (dsPut; records saved by older versions kept
+            // them inline as entry.cols); entries saved before the columnar form are converted on first load.
             // Values are Float64, so nothing changes numerically. delta2 is NaN where the source had none.
             const COL_ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'SUPPORT'];
             const COL_ROLE_IDX = { TOP: 0, JUNGLE: 1, MIDDLE: 2, BOTTOM: 3, SUPPORT: 4 };
@@ -2401,9 +2476,36 @@
             }
             // Drift variance of a champion's true win rate between today and a patch `age` patches ago (0 for the current patch)
             const adaptiveDrift = age => (age > 0 ? ADAPTIVE_DRIFT.wobble + ADAPTIVE_DRIFT.walk * age : 0);
+            // The changesFor of adaptiveChampionStats from patch notes. notesBy: patch -> { championId: { kind, context, changes } } or
+            // undefined (not readable); released: Data Dragon's patch labels, newest first. A step from a saved patch back to the next
+            // saved one covers every released patch after `older` up to `newer`, so a change in a patch missing from the archive still
+            // counts: a rework in any of them is a rework, several buffs / nerfs add up (their priors' means and variances are summed;
+            // 'adjust' when the kinds differ). undefined when a patch of the step has no readable notes and nothing was found.
+            function adaptiveChangesLookup(notesBy, released) {
+                const one = (champion, patch) => {
+                    const n = notesBy[patch];
+                    if (!n) return undefined;
+                    const c = n[champion];
+                    if (!c) return null;
+                    return { kind: c.kind, patch, rework: (c.changes || []).length >= ADAPTIVE_REWORK.lines || ADAPTIVE_REWORK.words.test(c.context || '') };
+                };
+                return (champion, newer, older) => {
+                    const step = older ? released.filter(p => comparePatchLabels(p, older) > 0 && comparePatchLabels(p, newer) <= 0) : [];
+                    if (!step.includes(newer)) step.unshift(newer);
+                    const found = step.map(p => one(champion, p)), ch = found.filter(Boolean);
+                    if (!ch.length) return found.some(x => x === undefined) ? undefined : null;
+                    if (ch.length === 1) return ch[0];
+                    const pr = ch.map(x => ADAPTIVE_CHANGE_PRIOR[x.kind] || ADAPTIVE_CHANGE_PRIOR.adjust);
+                    return { kind: ch.every(x => x.kind === ch[0].kind) ? ch[0].kind : 'adjust', patch: ch[0].patch, rework: ch.some(x => x.rework),
+                             prior: { m: pr.reduce((s, x) => s + x.m, 0), sd: Math.sqrt(pr.reduce((s, x) => s + x.sd * x.sd, 0)) } };
+                };
+            }
 
-            // parts: newest first, [{ statsList, totalGames, patch, age }]. changesFor(champion, patch) -> undefined (no notes for that
-            // patch), null (not changed in it) or { kind: 'buff'|'nerf'|'adjust', rework } (the notes of `patch` = the changes going INTO it).
+            // parts: newest first, [{ statsList, totalGames, patch, age }]. changesFor(champion, patch, olderPatch) -> undefined (no notes for
+            // that step), null (not changed in it) or { kind: 'buff'|'nerf'|'adjust', rework, patch?, prior? } (the changes going INTO
+            // `patch` since `olderPatch`, the next saved part: also those of released patches between the two that are not saved, see
+            // adaptiveChangesLookup; prior = summed { m, sd } when several changes add up). A step over a gap of several patches
+            // allows the drift of that many patches.
             // Returns { statsList, windows: Map "champion,ROLE" -> { depth, played, used, changes } }: depth = how many patches the combo
             // may reach back (1 for off-roles), used = patches its base win rate pools, changes = [{ patch, kind, d }] corrections inside
             // the used window (d = estimated win-rate change at that patch, added to every older patch). Records get games (effective),
@@ -2420,7 +2522,7 @@
                         champTotals[i].set(item.champion, (champTotals[i].get(item.champion) || 0) + g);
                     }
                 });
-                const drift1 = adaptiveDrift(1);
+                const stepDrift = i => adaptiveDrift(Math.max(1, (parts[i].age || 0) - (parts[i - 1].age || 0))); // drift between part i - 1 and part i
                 const statsList = [], windows = new Map();
                 for (const [key, c] of combos) {
                     // played role: share of the champion's games over the window, sticky down to 7%
@@ -2436,26 +2538,26 @@
                     let depth = played ? parts.length : 1;
                     // pairs only stop at a rework of either champion (their deltas don't drift, off-roles included)
                     let pairDepth = parts.length;
-                    for (let i = 1; i < parts.length; i++) { const ch = changesFor(c.champion, parts[i - 1].patch); if (ch && ch.rework) { pairDepth = i; break; } }
+                    for (let i = 1; i < parts.length; i++) { const ch = changesFor(c.champion, parts[i - 1].patch, parts[i].patch); if (ch && ch.rework) { pairDepth = i; break; } }
                     const shift = [0], shiftVar = [0], changes = [];
                     if (played) {
                         let S = 0, SV = 0;
                         for (let i = 1; i < parts.length; i++) {
-                            const newer = c.per[i - 1], older = c.per[i];
-                            const ch = changesFor(c.champion, parts[i - 1].patch);
+                            const newer = c.per[i - 1], older = c.per[i], drift = stepDrift(i);
+                            const ch = changesFor(c.champion, parts[i - 1].patch, parts[i].patch);
                             const J = newer && older && newer.g > 0 && older.g > 0 ? newer.wr - older.wr : null;
                             const seJ2 = J === null ? 0 : newer.wr * (1 - newer.wr) / newer.g + older.wr * (1 - older.wr) / older.g;
                             if (ch && ch.rework) { depth = i; break; }
                             if (ch) {
-                                const pr = ADAPTIVE_CHANGE_PRIOR[ch.kind] || ADAPTIVE_CHANGE_PRIOR.adjust, t2 = pr.sd * pr.sd;
+                                const pr = ch.prior || ADAPTIVE_CHANGE_PRIOR[ch.kind] || ADAPTIVE_CHANGE_PRIOR.adjust, t2 = pr.sd * pr.sd;
                                 let d = pr.m, dv = t2;
                                 if (J !== null) {
-                                    if (Math.abs(J - pr.m) > ADAPTIVE_JUMP_Z * Math.sqrt(t2 + seJ2 + drift1)) { depth = i; break; } // far bigger than such a change
-                                    const k = t2 / (t2 + seJ2 + drift1);
-                                    d = pr.m + k * (J - pr.m); dv = k * (seJ2 + drift1);
+                                    if (Math.abs(J - pr.m) > ADAPTIVE_JUMP_Z * Math.sqrt(t2 + seJ2 + drift)) { depth = i; break; } // far bigger than such a change
+                                    const k = t2 / (t2 + seJ2 + drift);
+                                    d = pr.m + k * (J - pr.m); dv = k * (seJ2 + drift);
                                 }
-                                S += d; SV += dv; changes.push({ i, patch: parts[i - 1].patch, kind: ch.kind, d });
-                            } else if (J !== null && Math.abs(J) > (ch === null ? ADAPTIVE_JUMP_Z : 3) * Math.sqrt(seJ2 + drift1)) {
+                                S += d; SV += dv; changes.push({ i, patch: ch.patch || parts[i - 1].patch, kind: ch.kind, d });
+                            } else if (J !== null && Math.abs(J) > (ch === null ? ADAPTIVE_JUMP_Z : 3) * Math.sqrt(seJ2 + drift)) {
                                 depth = i; break; // a jump the notes don't explain (no notes for that patch: a lower bar)
                             }
                             shift[i] = S; shiftVar[i] = SV;
@@ -2553,15 +2655,15 @@
 
                 const fromEntry = async (offline) => {
                     const statsList = await dsDecode(entry.stats, entry.enc);
-                    let cols = entry.cols || null, matchups = null;
+                    let cols = await dsGetCols(store, entry), matchups = null;
                     if (cols) {
                         if (needMap) matchups = colsToMap(cols);
                     } else { // older entry: JSON path once, then save the columnar form for next time
                         matchups = new Map(Object.entries(await dsDecode(entry.matchups, entry.enc)));
                         cols = matchupsToCols(matchups, matchups.size);
                         if (cols) {
-                            const updated = Object.assign({}, entry, { cols, bytes: (entry.bytes || 0) + colsBytes(cols) });
-                            dsSaveInBackground(dsTx(store, 'readwrite', tx => tx.objectStore(store).put(updated)));
+                            const updated = Object.assign({}, entry, { bytes: (entry.bytes || 0) + colsBytes(cols) });
+                            dsSaveInBackground(dsPut(store, updated, cols));
                             if (!needMap) matchups = null; // a ~1M-entry Map per patch would add up to GBs across a range
                         }
                     }
@@ -2581,8 +2683,18 @@
                     if (!entry) throw new Error(`Patch ${label} is not saved for ${rank}`);
                     return fromEntry(false);
                 }
-                if (entry && runId && entry.last_updated_utc === runId && !offlineMode) return fromEntry(false);
+                // Downloaded on this PC (Saved data › Download more history, any rank's current patch) after the bucket's run: newer than
+                // the bucket's file, so it is used as it is and the next Current Patch load does not overwrite it with older data
+                const newerScrape = !!(entry && entry.source === 'scraped' && scrapedAfterRun(entry.last_updated_utc));
+                if (entry && runId && (entry.last_updated_utc === runId || newerScrape) && !offlineMode) return fromEntry(false);
                 if (entry && offlineMode) return fromEntry(true);
+                // Offline with the new patch's metadata saved but its dataset never downloaded: the newest saved patch of this rank,
+                // labelled with its own patch (the header says it is not the current one)
+                if (!entry && offlineMode && isPatch) {
+                    const prev = [...archiveIndex.values()].filter(e => e.rank === rank).sort((a, b) => comparePatchLabels(b.patch, a.patch))[0];
+                    if (prev) { try { entry = await dsGet('archive', prev.key); } catch (e) { entry = null; } }
+                    if (entry) return fromEntry(true);
+                }
                 // Cache-first start-up: show the saved copy of an older scraper run at once; the freshness check (below) replaces it.
                 if (entry && serveStaleOnce) return fromEntry(false);
 
@@ -2606,8 +2718,7 @@
                         key, period: timePeriod, patch: currentPatchLabel(), rank, enc: stats.enc, stats: statsBlob, matchups: matchupsBlob,
                         bytes: statsBlob.size + matchupsBlob.size + colsBytes(cols), totalGames, last_updated_utc: savedAt, savedAt: Date.now()
                     };
-                    if (cols) rec.cols = cols;
-                    await dsPut(store, rec);
+                    await dsPut(store, rec, cols);
                     if (store === 'archive') { await refreshArchiveIndex(); rebuildTimePeriodOptions(); }
                     refreshStorageUI();
                     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); // ask the browser not to evict (web app)
@@ -2639,16 +2750,13 @@
                 }
                 if (timePeriod === ADAPTIVE_PERIOD) {
                     const ap = adaptivePatches(rank), ages = ap.map(p => p.age);
-                    // the patch notes of every patch in the window (read once each, then saved): balance changes are corrected, not cut off
+                    // the patch notes of every patch in the window, and of the released patches between them that are not saved (their
+                    // changes still happened), read once each, then saved: balance changes are corrected, not cut off
+                    const released = ddragonPatchLabels.length ? ddragonPatchLabels : patches, oldest = patches[patches.length - 1];
+                    const want = [...new Set([...patches, ...released.filter(p => comparePatchLabels(p, oldest) > 0 && comparePatchLabels(p, patches[0]) <= 0)])];
                     const notesBy = {};
-                    await Promise.all(patches.map(async p => { notesBy[p] = window.DDPatchNotes ? await DDPatchNotes.get(p) : undefined; }));
-                    const changesFor = (champion, patch) => {
-                        const n = notesBy[patch];
-                        if (!n) return undefined;
-                        const c = n[champion];
-                        if (!c) return null;
-                        return { kind: c.kind, rework: (c.changes || []).length >= ADAPTIVE_REWORK.lines || ADAPTIVE_REWORK.words.test(c.context || '') };
-                    };
+                    await Promise.all(want.map(async p => { notesBy[p] = window.DDPatchNotes ? await DDPatchNotes.get(p) : undefined; }));
+                    const changesFor = adaptiveChangesLookup(notesBy, released);
                     const champ = adaptiveChampionStats(parts.map((p, i) => ({ statsList: p.statsList, totalGames: p.totalGames, patch: patches[i], age: ages[i] })), changesFor);
                     const depthOf = (name, role) => { const x = champ.windows.get(`${name},${role}`); return x ? x.pairDepth : ages.length; };
                     for (const p of parts) if (!p.cols && p.matchups) p.cols = matchupsToCols(p.matchups, p.matchups.size);
@@ -2660,7 +2768,7 @@
                         statsList: champ.statsList, matchups: colsToMap(cols), cols, totalGames: parts[0].totalGames,
                         info: {
                             source: 'combined', adaptive: true, windows: champ.windows, notes: Object.keys(notesBy).filter(p => notesBy[p]), patches, savedAt: parts[0].info.savedAt, offline: parts.some(p => p.info.offline),
-                            parts: parts.map((p, i) => ({ patch: patches[i], savedAt: p.info.savedAt }))
+                            parts: parts.map((p, i) => ({ patch: patches[i], savedAt: p.info.savedAt, scraped: !!p.info.scraped }))
                         }
                     };
                 }
@@ -2676,7 +2784,7 @@
                     statsList: stats.statsList, matchups, cols, totalGames: stats.totalGames,
                     info: {
                         source: 'combined', patches, savedAt: parts[0].info.savedAt, offline: parts.some(p => p.info.offline),
-                        parts: parts.map((p, i) => ({ patch: patches[i], savedAt: p.info.savedAt }))
+                        parts: parts.map((p, i) => ({ patch: patches[i], savedAt: p.info.savedAt, scraped: !!p.info.scraped }))
                     }
                 };
             }
@@ -2740,6 +2848,7 @@
                 if (d.detail.items && d.detail.items.boots) rec.items.boots = Object.assign({}, d.detail.items.boots, rec.items.boots || {});
                 if (d.detail.runes && d.detail.runes.byKeystone && rec.runes) rec.runes.byKeystone = d.detail.runes.byKeystone;
                 rec.hasDetail = true;
+                rec.detailAt = d.scrapedAt || null;   // bvDetailMissing: detail far older than the overview is fetched again
             }
             // Does this champion-role in this (single-patch) dataset have the detail tables? (Datasets downloaded before the
             // bulk/detail split already contain everything.)
@@ -2787,6 +2896,8 @@
                 if (!data.fetchedAt) data.legacyAt = data.scrapedAt || null; // records saved before per-record times: dated by the file's last write
                 data.fetchedAt = data.fetchedAt || {};
                 data.fetchedAt[id] = data.scrapedAt = new Date().toISOString();
+                data.liveAt = data.liveAt || {};   // fetched while its patch was still current (partial): fetched once more after it ends
+                data.liveAt[id] = patch === currentPatchLabel();
                 const blob = await new Response(new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
                 await dsPut('builds', {
                     key: buildsKey(patch), patch, rank: BUILDS_RANK, enc: 'gzip', data: blob, bytes: blob.size, scrapedAt: data.scrapedAt,
@@ -2798,8 +2909,9 @@
                 notifyBuildsUpdated(patch);
             }
             // Has this champion-role been fetched (or found to have no games) for this patch? Uses the loaded dataset.
-            // Finished patches are final. The CURRENT patch's record is fetched again on view once it is older than BUILDS_MAX_AGE_MS
-            // (still on demand, one champion-role at a time: never in bulk or in the background).
+            // The CURRENT patch's record is fetched again on view once it is older than BUILDS_MAX_AGE_MS. A finished patch is final,
+            // except a record fetched while that patch was still current (liveAt: only part of its games), which is fetched once more
+            // on view (still on demand, one champion-role at a time: never in bulk or in the background).
             const BUILDS_MAX_AGE_MS = 24 * 3600 * 1000;
             function buildsRecordAgeMs(ds, id) {
                 const iso = (ds.fetchedAt && ds.fetchedAt[id]) || ds.legacyAt || ds.scrapedAt;
@@ -2810,6 +2922,7 @@
                 const ds = buildsDatasetCache.get(patch);
                 const id = `${champion}|${role}`;
                 const has = !!(ds && ((ds.champions && ds.champions[id]) || (ds.skipped || []).includes(id)));
+                if (has && patch !== currentPatchLabel() && ds.liveAt && ds.liveAt[id]) return false;
                 return has && !(patch === currentPatchLabel() && buildsRecordAgeMs(ds, id) > BUILDS_MAX_AGE_MS);
             }
 
@@ -3011,7 +3124,7 @@
                     const sum = l => l.reduce((s, e) => s + e.bytes, 0);
                     const est = (navigator.storage && navigator.storage.estimate) ? await navigator.storage.estimate() : null;
                     const rows = arch.sort((a, b) => comparePatchLabels(b.patch, a.patch) || a.rank.localeCompare(b.rank))
-                        .map(e => `<li>Patch ${e.patch} / ${RANKS[e.rank] || e.rank}: ${formatBytes(e.bytes)}, ${e.totalGames.toLocaleString()} games, snapshot ${formatTimeAgo(parseRunDate(e.last_updated_utc))}</li>`).join('');
+                        .map(e => `<li>Patch ${e.patch} / ${RANKS[e.rank] || e.rank}: ${formatBytes(e.bytes)}, ${e.totalGames.toLocaleString()} games, snapshot ${formatTimeAgo(parseRunDate(e.last_updated_utc))}${e.partial ? ' · partial (some champion-roles failed: Download more history offers it again)' : ''}</li>`).join('');
                     storageBody.innerHTML =
                         `<p><strong>Patch archive:</strong> ${arch.length} snapshot${arch.length === 1 ? '' : 's'}, ${formatBytes(sum(arch))}. Each patch you load is kept (the latest snapshot per patch and rank) so you can pick past patches or combine several. It is never deleted automatically.</p>` +
                         (rows ? `<ul>${rows}</ul>` : '') +
@@ -3025,16 +3138,17 @@
                 renderBuildsSection();
             }
             async function clearStore(store) {
-                const what = store === 'archive' ? 'the whole patch archive (saved past patches cannot be re-downloaded)' : 'the downloaded 30-day data';
+                const what = store === 'archive' ? 'the whole patch archive (saved past patches cannot be re-downloaded)'
+                    : 'the downloaded 30 / 14 / 7 day data (the 7 and 14 day windows have to be downloaded from LoLalytics again)';
                 if (!confirm(`Delete ${what}?`)) return;
                 try { await dsClear(store); } catch (e) { console.warn('Clear failed:', e); }
-                if (store === 'archive') {
-                    await refreshArchiveIndex();
-                    for (const k of [...dataCache.keys()]) { if (!/^(patch|30)-/.test(k)) dataCache.delete(k); }
-                    const before = timePeriodSelect.value;
-                    rebuildTimePeriodOptions();
-                    if (timePeriodSelect.value !== before) handleFilterChange();
-                }
+                await refreshArchiveIndex(); // the archive index, and the downloaded day windows (dayIndex) for 'live'
+                // in-memory datasets built from what was deleted (the 30-day data in memory came from the bucket and stays valid)
+                const gone = store === 'archive' ? k => !/^(patch|30|d7|d14)-/.test(k) : k => /^d(7|14)-/.test(k);
+                for (const k of [...dataCache.keys()]) { if (gone(k)) dataCache.delete(k); }
+                const before = timePeriodSelect.value;
+                rebuildTimePeriodOptions();
+                if (timePeriodSelect.value !== before) timePeriodSelect.dispatchEvent(new Event('change')); // every view follows the new period
                 refreshStorageUI();
                 openStorageModal();
             }
@@ -3054,9 +3168,11 @@
                         whenText = ago ? `Downloaded ${ago}` : '';
                         tip = 'Scraped from LoLalytics on this PC. A rolling window: DravenGap re-downloads it in the background once it is more than a day old.';
                     } else if (isSavedPatchPeriod(tp)) {
-                        patchText = `Patch ${tp.slice(2)} · saved`;
+                        const ahead = cur && comparePatchLabels(tp.slice(2), cur) > 0; // downloaded before the shared data has this patch
+                        patchText = `Patch ${tp.slice(2)} · ${ahead ? 'downloaded' : 'saved'}`;
                         whenText = ago ? `${info.scraped ? 'Downloaded' : 'Snapshot taken'} ${ago}` : '';
-                        tip = info.scraped
+                        tip = ahead ? `Downloaded from LoLalytics on this PC; the shared data is still on ${cur}. The patch is still running: download it again later (Saved data › Download more history) for more games.`
+                            : info.scraped
                             ? 'Downloaded from LoLalytics after the patch ended, so it holds the whole patch.'
                             : 'Archived patch: the last snapshot stored while this patch was current.';
                     } else if (info.source === 'combined') {
@@ -3064,14 +3180,21 @@
                         patchText = `${info.adaptive ? 'Adaptive · up to patches' : 'Patches'} ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}`;
                         patchTip = miss.length ? patchMissingTip(miss) : '';
                         if (info.adaptive) patchTip = (patchTip ? patchTip + '\n' : '') + 'Each statistic uses only as many of these patches as it needs for enough games (see the "why" panel of a pick).';
-                        whenText = ago ? `Current patch updated ${ago}` : '';
+                        // savedAt is the newest part's: the current patch's only when the period contains it (a range of older patches doesn't)
+                        whenText = !ago ? '' : info.patches.includes(cur) ? `Current patch updated ${ago}` : `Newest patch (${info.patches[0]}) saved ${ago}`;
                         tip = info.parts.map(p => `Patch ${p.patch}: snapshot ${p.savedAt ? parseRunDate(p.savedAt).toLocaleString() : 'unknown'}`).join('\n');
                         if (info.offline) whenText = `Offline — using saved data (${whenText})`;
                     } else if (info.offline) {
                         whenText = `Offline — using saved data from ${valid ? when.toLocaleDateString() : 'an earlier session'}`;
+                        if (tp === 'patch' && info.patch && cur && info.patch !== cur) { // the current patch was never downloaded: an older saved one
+                            patchText = `Patch ${info.patch} · saved (${cur} not downloaded yet)`;
+                            patchTip = `Patch ${cur}'s data was not downloaded before going offline, so the newest saved patch is shown. It is replaced once the data server can be reached.`;
+                        }
                     } else if (ago) {
                         whenText = `Data updated ${ago}`;
                     }
+                } else if (offlineMode) {
+                    whenText = 'Offline — no saved data for this selection';
                 }
                 if (freshStatus.text && Date.now() < freshStatus.until) { // "Updating data…" / "Data updated just now" (Freshness section)
                     whenText = freshStatus.text;
@@ -3093,7 +3216,8 @@
                 const info = ds.info || {};
                 const local = isDayPeriod(tp) || info.scraped;
                 const miss = info.source === 'combined' && info.patches ? patchesMissingIn(info.patches) : [];
-                const period = tp === 'patch' && currentPatchLabel() ? `Patch ${currentPatchLabel()}` : info.source === 'combined' && info.patches ? `${info.adaptive ? 'Adaptive · up to patches' : 'Patches'} ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}` : periodLabel(tp);
+                const livePatch = tp === 'patch' ? (info.patch || currentPatchLabel()) : ''; // (offline, an older saved patch can stand in)
+                const period = livePatch ? `Patch ${livePatch}` : info.source === 'combined' && info.patches ? `${info.adaptive ? 'Adaptive · up to patches' : 'Patches'} ${patchRangeLabel(info.patches)}${patchMissingNote(miss)}` : periodLabel(tp);
                 const rows = [['Min Games', minGamesFilter.value || '0']];
                 if (miss.length) rows.push(['Not saved', `${miss.join(', ')}: download in Settings > Data > Saved data`]);
                 if (refStatusEl.textContent) rows.push(['Prior', refStatusEl.textContent]);
@@ -3101,9 +3225,28 @@
                 return {
                     title: 'Draft data', short: 'LoLalytics', source: local ? 'LoLalytics (downloaded on this PC)' : 'LoLalytics, via the DravenGap data bucket', url: 'https://lolalytics.com/',
                     rank: RANKS[rank] || rank, period, games: ds.total_games, updatedAt: info.savedAt || null, stale: !!info.offline, rows,
-                    note: info.offline ? 'Offline: showing the copy saved on this PC.' : (rank === AUTO_SCRAPE_RANK || !local ? 'Checked for newer data hourly and when the app regains focus.' : 'Re-downloaded only when you ask (automatic downloads are Emerald+ only).'),
-                    onRefresh: async () => { await window.DD.freshness.check('manual'); renderDraftProv(); return { message: `Checked at ${new Date().toLocaleTimeString()}: ${lastUpdatedInfoDiv.textContent || 'done'}.` }; }
+                    note: info.offline ? 'Offline: showing the copy saved on this PC.' : (rank === AUTO_SCRAPE_RANK || !local ? 'Checked for newer data hourly and when the app regains focus.' : 'Re-downloaded only when you ask: Refresh downloads it again from LoLalytics (automatic downloads are Emerald+ only).'),
+                    onRefresh: async () => {
+                        // Downloaded on this PC at a rank the automatic refresh skips (Emerald+ only): the user asked, so download it again
+                        if (local && rank !== AUTO_SCRAPE_RANK && canScrape) {
+                            const job = manualRefreshJob(tp, rank, info);
+                            if (!job) return { message: 'This patch was downloaded after it ended, so it already holds the whole patch: nothing newer to download.' };
+                            const r = await startScrapeJobs([job]);
+                            return { message: r.ok ? `Downloading ${jobLabel(job)} from LoLalytics (about 1,700 requests, a few minutes). Progress: Saved data.` : r.error };
+                        }
+                        await window.DD.freshness.check('manual'); renderDraftProv(); return { message: `Checked at ${new Date().toLocaleTimeString()}: ${lastUpdatedInfoDiv.textContent || 'done'}.` };
+                    }
                 };
+            }
+            // The one download job that refreshes a dataset downloaded on this PC: a day window, or a patch that is still running (or
+            // was saved partial). null for a finished patch downloaded complete after it ended.
+            function manualRefreshJob(tp, rank, info) {
+                if (isDayPeriod(tp)) return { period: tp.slice(1), rank, kind: tp };
+                const patch = tp === 'patch' ? (info.patch || currentPatchLabel()) : isSavedPatchPeriod(tp) ? tp.slice(2) : null;
+                if (!patch) return null;
+                const cur = currentPatchLabel(), e = archiveIndex.get(`${patch}|${rank}`);
+                if (cur && comparePatchLabels(patch, cur) < 0 && !(e && e.partial)) return null;
+                return { period: patch, rank, kind: 'patch' };
             }
             function renderDraftProv() {
                 const el = document.getElementById('rec-prov');
@@ -3163,8 +3306,9 @@
                 customRange = `r:${lo}-${hi}`;
                 rebuildTimePeriodOptions();
                 timePeriodSelect.value = customRange;
-                lastTimePeriod = customRange;
-                handleFilterChange();
+                // the same path as picking a period by hand: lastTimePeriod, the draft, and every view that follows the selector
+                // (Tier list, Champion page, Premades, Builds) reload
+                timePeriodSelect.dispatchEvent(new Event('change'));
             });
             // --- END: Patch range picker ---
 
@@ -3235,6 +3379,7 @@
             }
 
             // Jobs for the current form: patches newest first, the selected rank first within each period; already-saved items skipped
+            // (a patch saved partial, with champion-roles that failed, is offered again)
             function buildScrapeJobs() {
                 const ranks = [...document.querySelectorAll('.scrape-rank:checked')].map(x => x.value)
                     .sort((a, b) => (b === rankSelect.value) - (a === rankSelect.value));
@@ -3248,7 +3393,8 @@
                 }
                 for (const p of patches) {
                     for (const rank of ranks) {
-                        if (!redo && archiveIndex.has(`${p}|${rank}`)) continue;
+                        const have = archiveIndex.get(`${p}|${rank}`);
+                        if (!redo && have && !have.partial) continue;
                         jobs.push({ period: p, rank, kind: 'patch' });
                     }
                 }
@@ -3266,11 +3412,18 @@
             async function startScrape() {
                 const jobs = buildScrapeJobs();
                 if (!jobs.length) return;
+                const res = await startScrapeJobs(jobs);
+                if (!res.ok) alert(res.error);
+            }
+            // A download the user asked for (the form above, or Refresh on the draft's data chip): { ok } or { ok: false, error }
+            async function startScrapeJobs(jobs) {
+                if (scrapeState) return { ok: false, error: 'A history download is already running (Saved data shows its progress).' };
                 const res = await window.electronAPI.scrapeStart(jobs.map(j => ({ period: j.period, rank: j.rank })));
-                if (!res.ok) { alert(res.error); return; }
-                scrapeState = { jobs, index: 0, done: 0, total: 0, completed: 0, failed: 0, auto: false };
+                if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'The download could not start.' };
+                scrapeState = { jobs, index: 0, done: 0, total: 0, completed: 0, failed: 0, kept: 0, auto: false };
                 renderScrapeSection();
                 updateScrapeStatusLine();
+                return { ok: true };
             }
             function jobLabel(job) {
                 const what = job.kind === 'patch' ? `Patch ${job.period}` : DAY_PERIODS[job.kind];
@@ -3281,8 +3434,10 @@
                 const job = st.jobs[st.index];
                 const pct = st.total ? Math.floor(100 * st.done / st.total) : 0;
                 return `${st.auto ? 'Automatic refresh of your downloaded data. ' : ''}Downloading ${st.index + 1} of ${st.jobs.length}: ${job ? jobLabel(job) : ''} (${pct}%). ` +
-                    `${st.completed} saved${st.failed ? `, ${st.failed} failed` : ''}. You can close this window; it keeps going.`;
+                    `${scrapeCountText(st)}. You can close this window; it keeps going.`;
             }
+            // "2 saved, 1 not saved (the saved copy is more complete), 1 failed"
+            const scrapeCountText = st => `${st.completed} saved${st.kept ? `, ${st.kept} not saved (the saved copy is more complete)` : ''}${st.failed ? `, ${st.failed} failed` : ''}`;
             function updateScrapeStatusLine() {
                 if (!scrapeState) { refreshStorageUI(); return; }
                 const st = scrapeState;
@@ -3290,41 +3445,91 @@
                 const p = document.getElementById('scrape-progress');
                 if (p) p.textContent = scrapeProgressText();
             }
-            // Stores a finished dataset exactly like a downloaded one, so the rest of the app needs no special cases
+            // Stores a finished dataset exactly like a downloaded one, so the rest of the app needs no special cases. Returns false when
+            // the saved copy was kept instead: a partial download (d.failed champion-roles that kept failing) never replaces a complete
+            // copy, and a patch download never replaces one with clearly more games (a patch only gains games). With nothing saved
+            // yet, a partial download is kept, marked partial (offered again in Download more history and by the automatic refresh).
             async function storeScrapedDataset(d) {
                 const kind = /^\d+\.\d+$/.test(d.period) ? 'patch' : `d${d.period}`;
+                const store = kind === 'patch' ? 'archive' : 'live', key = kind === 'patch' ? `${d.period}|${d.rank}` : `${kind}|${d.rank}`;
+                const partial = (d.failed || 0) > 0;
+                const old = (kind === 'patch' ? archiveIndex : dayIndex).get(key);
+                if (old && ((partial && !old.partial) || (kind === 'patch' && old.totalGames > 0 && d.totalGames < 0.9 * old.totalGames))) {
+                    console.warn(`Downloaded ${jobLabel({ kind, period: d.period, rank: d.rank })} not saved (${partial ? `${d.failed} champion-roles failed` : `${d.totalGames} games, the saved copy has ${old.totalGames}`}); the saved copy is kept.`);
+                    return false;
+                }
                 const stats = new Blob([d.statsGz]), matchups = new Blob([d.matchupsGz]);
                 const rec = {
                     period: kind, rank: d.rank, enc: 'gzip', stats, matchups, bytes: stats.size + matchups.size,
                     totalGames: d.totalGames, last_updated_utc: d.scrapedAt, savedAt: Date.now(), source: 'scraped'
                 };
-                if (kind === 'patch') await dsPut('archive', { ...rec, key: `${d.period}|${d.rank}`, patch: d.period });
-                else await dsPut('live', { ...rec, key: `${kind}|${d.rank}`, patch: null });
-                // Drop in-memory datasets built from the old data (saved/combined/day periods; the live R2 ones are unaffected)
-                for (const k of [...dataCache.keys()]) { if (!/^(patch|30)-/.test(k)) dataCache.delete(k); }
+                if (partial) { rec.partial = true; rec.failedRoles = d.failed; }
+                await dsPut(store, { ...rec, key, patch: kind === 'patch' ? d.period : null });
+                // In-memory datasets of THIS rank built from the old data: the day window itself; for a patch, its saved period, the
+                // current patch when it is this one, and the combined periods (Last N, ranges, Adaptive) unless the patch is newer than
+                // the current one (they never include it). Other ranks are untouched. The dataset on screen stays until its quiet reload.
+                const cur = currentPatchLabel(), newer = kind === 'patch' && cur && comparePatchLabels(d.period, cur) > 0;
+                const stale = k => k.endsWith(`-${d.rank}`) && (kind !== 'patch' ? k === `${kind}-${d.rank}`
+                    : k === `p:${d.period}-${d.rank}` || (d.period === cur && k === `patch-${d.rank}`) || (!newer && /^(last\d|r:|adaptive-)/.test(k)));
+                const shownKey = `${timePeriodSelect.value}-${rankSelect.value}`;
+                let shownStale = false;
+                for (const k of [...dataCache.keys()]) { if (!stale(k)) continue; if (k === shownKey) shownStale = true; else dataCache.delete(k); }
                 await refreshArchiveIndex();
                 const before = timePeriodSelect.value;
                 rebuildTimePeriodOptions();
-                // Re-render when the period on screen is the one just replaced (a refreshed day window / patch), not only when it vanished
-                const shown = timePeriodSelect.value;
-                if (shown !== before || shown === kind || shown === `p:${d.period}` || isCombinedPeriod(shown)) handleFilterChange();
+                if (timePeriodSelect.value !== before) { // every view follows the new period
+                    if (shownStale) dataCache.delete(shownKey);
+                    timePeriodSelect.dispatchEvent(new Event('change'));
+                    return true;
+                }
+                // The period on screen was built from the replaced data: reload it in the background (no overlay; draft and filters stay),
+                // or once champion select is over (the numbers don't change under a pick)
+                if (shownStale) { if (liveInChampSelect) shownReloadDeferred.add(shownKey); else await reloadShownQuietly(); }
+                return true;
             }
+            // Reloads the selected dataset without the overlay (the old one is served until the new one is ready), then re-renders
+            const shownReloadDeferred = new Set();   // cache keys of datasets replaced during champion select: reloaded when it ends
+            async function reloadShownQuietly() {
+                const tp = timePeriodSelect.value, rank = rankSelect.value, key = `${tp}-${rank}`;
+                let p = dataPending.get(key);
+                if (!p) {
+                    p = loadDataset(tp, rank, false, true);
+                    dataPending.set(key, p);
+                    p.finally(() => { if (dataPending.get(key) === p) dataPending.delete(key); }).catch(() => {});
+                }
+                if (!(await p)) return;
+                if (timePeriodSelect.value === tp && rankSelect.value === rank) await handleFilterChange();
+            }
+            function runDeferredShownReload() {
+                const keys = [...shownReloadDeferred];
+                shownReloadDeferred.clear();
+                for (const k of keys) {
+                    if (k === `${timePeriodSelect.value}-${rankSelect.value}`) reloadShownQuietly().catch(e => console.warn('Reload failed:', e));
+                    else dataCache.delete(k); // no longer on screen: it reloads from the new data when selected again
+                }
+            }
+            let scrapeStoreChain = Promise.resolve(); // datasets are stored one after another; 'scrape-finished' waits for the last one
             if (canScrape) {
                 window.electronAPI.onScrapeEvent(async (channel, d) => {
                     if (!scrapeState && channel !== 'scrape-finished') return;
                     if (channel === 'scrape-progress') {
                         Object.assign(scrapeState, { index: d.jobIndex, done: d.done, total: d.total });
                     } else if (channel === 'scrape-dataset') {
-                        try { await storeScrapedDataset(d); scrapeState.completed++; }
-                        catch (e) { console.warn('Could not save downloaded dataset:', e); scrapeState.failed++; }
+                        // main sends the last dataset and 'scrape-finished' back to back, and storing takes a while (a large IndexedDB
+                        // write): chain it, count it on the run it belongs to, and let the finished branch wait for it
+                        const st = scrapeState;
+                        scrapeStoreChain = scrapeStoreChain.then(() => storeScrapedDataset(d)).then(saved => { if (saved) st.completed++; else st.kept = (st.kept || 0) + 1; },
+                            e => { console.warn('Could not save downloaded dataset:', e); st.failed++; });
+                        await scrapeStoreChain;
                     } else if (channel === 'scrape-error') {
                         console.warn('Download failed:', d.period, d.rank, d.error);
                         scrapeState.failed++;
                     } else if (channel === 'scrape-finished') {
+                        await scrapeStoreChain; // the last dataset may still be being stored
                         const st = scrapeState;
                         scrapeState = null;
                         await refreshStorageUI();
-                        if (st) storageInfoEl.title = `History download ${d.cancelled ? 'stopped' : 'finished'}: ${st.completed} saved${st.failed ? `, ${st.failed} failed` : ''}.`;
+                        if (st) storageInfoEl.title = `History download ${d.cancelled ? 'stopped' : 'finished'}: ${scrapeCountText(st)}.`;
                         if (storageModal.style.display !== 'none') openStorageModal();
                         if (st && st.auto && !d.cancelled && window.DD.notify) window.DD.notify.dataReady({ kind: 'scrape', saved: st.completed }); // notifications.js
                         return;
@@ -3372,25 +3577,29 @@
                 }
             }
             
-            // background = true loads silently (no overlay, no role-frequency reset): used for reference datasets (1.6/1.7)
+            // background = true loads silently (no overlay): used for reference datasets (1.6/1.7) and the views' own loads.
+            // Whichever way the dataset arrives (in memory, joining a load already running, or loaded now), the role frequencies
+            // (Live Tracking's lane guesses, Builds' default role) follow the dataset of the selected Rank + Time Period.
             async function getDataset(timePeriod, rank, background = false) {
                 const cacheKey = `${timePeriod}-${rank}`;
-                if (dataCache.has(cacheKey)) {
-                    return dataCache.get(cacheKey);
-                }
-                if (dataPending.has(cacheKey)) return dataPending.get(cacheKey);
+                if (dataCache.has(cacheKey)) return followRoleProbs(dataCache.get(cacheKey), timePeriod, rank);
+                if (dataPending.has(cacheKey)) return followRoleProbs(await dataPending.get(cacheKey), timePeriod, rank);
                 const pending = loadDataset(timePeriod, rank, background);
                 dataPending.set(cacheKey, pending);
                 try { return await pending; } finally { dataPending.delete(cacheKey); }
             }
+            function followRoleProbs(ds, timePeriod, rank) {
+                if (ds && ds.role_probs && timePeriodSelect.value === timePeriod && rankSelect.value === rank) roleProbabilities = ds.role_probs;
+                return ds;
+            }
 
-            // quiet = a refresh of a dataset that may already be on screen: no overlay, and the role probabilities follow it
+            // quiet = a refresh of a dataset that may already be on screen: no overlay
             async function loadDataset(timePeriod, rank, background, quiet = false) {
                 const cacheKey = `${timePeriod}-${rank}`;
 
                 if (!background && !quiet) {
                     loadingOverlay.style.display = 'flex';
-                    loadingMessage.textContent = `Loading data for ${timePeriod}/${rank}...`;
+                    loadingMessage.textContent = `Loading data for ${periodLabel(timePeriod)} · ${RANKS[rank] || rank}...`;
                 }
 
                 try {
@@ -3399,8 +3608,7 @@
                     const championStatsList = raw.statsList;
 
                     const championRatings = new Map();
-                    const prevRoleProbabilities = roleProbabilities;
-                    roleProbabilities = {}; // Reset and repopulate (a background load restores it below)
+                    const roleProbs = {}; // champion -> { ROLE: role frequency }, kept with the dataset (role_probs)
                     for (const item of championStatsList) {
                         const comboKey = `${item.champion},${item.role.toUpperCase()}`;
                         championRatings.set(comboKey, {
@@ -3411,13 +3619,12 @@
                             changes: item.window_changes || null // and the balance changes corrected inside them
                         });
 
-                        if (!roleProbabilities[item.champion]) {
-                            roleProbabilities[item.champion] = {};
+                        if (!roleProbs[item.champion]) {
+                            roleProbs[item.champion] = {};
                         }
-                        roleProbabilities[item.champion][item.role.toUpperCase()] = item.role_frequency;
+                        roleProbs[item.champion][item.role.toUpperCase()] = item.role_frequency;
                     }
-                    if (background || (quiet && !(timePeriodSelect.value === timePeriod && rankSelect.value === rank))) roleProbabilities = prevRoleProbabilities;
-                    
+
                     // Base-WR shrinkage (1.5): win_rate stays RAW (the delta fallbacks are defined against raw base WRs)
                     const totalGames = raw.totalGames; // games of this period (summed for combined periods), stored with the snapshot
                     const baseShrink = shrinkBaseWinRates(championStatsList, totalGames);
@@ -3441,14 +3648,16 @@
                         total_games: totalGames,
                         info: raw.info,
                         prior_tau2: pv ? pv.pooled : estimatePriorVariance(matchupStats),
-                        prior_tau2_by_class: pv ? pv.byClass : estimatePriorVarianceByClass(matchupStats)
+                        prior_tau2_by_class: pv ? pv.byClass : estimatePriorVarianceByClass(matchupStats),
+                        role_probs: roleProbs
                     };
-                    
+
                     dataCache.set(cacheKey, dataset);
+                    followRoleProbs(dataset, timePeriod, rank);
                     console.log(`Successfully loaded and cached data for ${cacheKey}.`);
                     return dataset;
                 } catch (error) {
-                    if (!background && !quiet) loadingMessage.textContent = `Failed to load data for ${timePeriod}/${rank}.`;
+                    if (!background && !quiet) loadingMessage.textContent = `Failed to load data for ${periodLabel(timePeriod)} · ${RANKS[rank] || rank}.`;
                     return null;
                 } finally {
                     if (!background && !quiet) loadingOverlay.style.display = 'none';
@@ -3505,8 +3714,9 @@
                 setRefStatus('Refining with reference data...', 'Loading the broader dataset used to centre the prior. Recommendations are already shown with the plain prior.');
                 const owner = !refLoading.has(key);
                 if (owner) refLoading.set(key, getDataset(spec.timePeriod, spec.rank, true).finally(() => refLoading.delete(key)));
+                // every caller waits for the load (not only the one that started it): a new selection with the same reference
+                // (Current Patch -> Last 7 Days, Master -> Diamond) gets its prior too; outdated callers stop at the selection check
                 const refDs = await refLoading.get(key);
-                if (!owner) return;
                 if (!refDs) { setRefStatus('Reference data unavailable', 'Could not load the broader dataset; using the plain prior.'); return; }
                 if (timePeriodSelect.value !== timePeriod || rankSelect.value !== rank || !borrowStrength) return; // selection changed; it re-kicks itself
                 await new Promise(resolve => setTimeout(resolve, 0)); // let the status paint before the (CPU heavy) tau_dev estimate
@@ -3514,6 +3724,7 @@
                 if (target.ref_prior) describeReferenceStatus(target);
                 else setRefStatus('No reference prior (too little overlap)');
                 if (recommendationTarget) await updateRecommendations();
+                if (activeTab === 'analysis' || activeTab === 'bans') await updateAnalysisView();   // their Exp WR uses the same prior: redraw too
             }
 
             function refTooltipLine(info) {
@@ -3568,17 +3779,18 @@
             
             function formatTimeAgo(date) {
                 const seconds = Math.floor((new Date() - date) / 1000);
+                const ago = (n, unit) => { n = Math.floor(n); return `${n} ${unit}${n === 1 ? '' : 's'} ago`; }; // "1 day ago", "2 days ago"
                 let interval = seconds / 31536000;
-                if (interval > 1) return Math.floor(interval) + " years ago";
+                if (interval > 1) return ago(interval, 'year');
                 interval = seconds / 2592000;
-                if (interval > 1) return Math.floor(interval) + " months ago";
+                if (interval > 1) return ago(interval, 'month');
                 interval = seconds / 86400;
-                if (interval > 1) return Math.floor(interval) + " days ago";
+                if (interval > 1) return ago(interval, 'day');
                 interval = seconds / 3600;
-                if (interval > 1) return Math.floor(interval) + " hours ago";
+                if (interval > 1) return ago(interval, 'hour');
                 interval = seconds / 60;
-                if (interval > 1) return Math.floor(interval) + " minutes ago";
-                return Math.floor(seconds) + " seconds ago";
+                if (interval > 1) return ago(interval, 'minute');
+                return ago(seconds, 'second');
             }
 
             // --- Freshness: keep every data source current without the user clicking anything ---
@@ -3602,10 +3814,11 @@
             //                                                                                          download runs or while offline
             //  Past patches (archive)          FINISHED patches never change: never re-scraped, with   Only the patch that just ended, and only for
             //                                  one exception: a snapshot of the previous patch saved   users who already use the scraper: one
-            //                                  from R2 mid-patch (not source 'scraped')                background Emerald+ scrape, tried once
+            //                                  from R2 mid-patch (not source 'scraped'), or a scrape   background Emerald+ scrape, tried once
+            //                                  of it saved partial (pages that kept failing)           (again after 12 h if it fails)
             //  Coachless builds                current patch record older than 24 h, seen on view      on-demand refetch of that one champion-role
-            //                                  (see buildsHasChampion); finished patches are final     when it is viewed. Never bulk, never in the
-            //                                                                                          background
+            //                                  (see buildsHasChampion), and a finished patch's record  when it is viewed. Never bulk, never in the
+            //                                  once if it was fetched while that patch was current     background
             //  ARAM caches (aram-main.js)      older than 6 h                                          served at once + refreshed by aram-main; here
             //                                                                                          only the tier list is warmed on open/hourly,
             //                                                                                          and only if the user ever opened ARAM
@@ -3639,16 +3852,20 @@
                     return m && m.last_updated_utc ? m : null;
                 } catch (e) { return null; }
             }
-            // Is this in-memory dataset out of date against the current metadata?
+            // Is this in-memory dataset out of date against the current metadata? (A current patch downloaded on this PC after the
+            // bucket's run is not: acquireSnapshot would serve it again.)
             function datasetIsStale(ds, key) {
                 const runId = metadata && metadata.last_updated_utc, cur = currentPatchLabel(), i = ds && ds.info;
                 if (!runId || !i || !LIVE_KEY_RE.test(key)) return false;
                 if (i.source === 'combined') {
                     if ((key.startsWith('last') || key.startsWith('adaptive-')) && i.patches[0] !== cur) return true;
                     const idx = i.patches.indexOf(cur);
-                    return idx >= 0 && (i.parts[idx].savedAt !== runId || !!i.offline);
+                    if (idx < 0) return false;
+                    if (!i.offline && i.parts[idx].scraped && scrapedAfterRun(i.parts[idx].savedAt)) return false;
+                    return i.parts[idx].savedAt !== runId || !!i.offline;
                 }
                 if (key.startsWith('patch-') && i.patch && cur && i.patch !== cur) return true;
+                if (!i.offline && i.scraped && scrapedAfterRun(i.savedAt)) return false;
                 return !!i.offline || i.savedAt !== runId;
             }
 
@@ -3766,10 +3983,11 @@
                     }).sort((a, b) => a.period.localeCompare(b.period));
                     for (const e of days) jobs.push({ period: e.period.slice(1), rank: e.rank, id: `${e.period}|${e.rank}` });
                     // the patch that just ended: its R2 snapshot was taken while it was still running; one scrape per rank gives the whole patch
+                    // (also a scrape of it that was saved partial: some champion-roles kept failing)
                     const cur = currentPatchLabel();
                     const past = [...new Set([...archiveIndex.values()].map(e => e.patch))].filter(p => p && cur && comparePatchLabels(p, cur) < 0).sort((a, b) => comparePatchLabels(b, a))[0];
                     if (past) {
-                        const mid = [...archiveIndex.values()].filter(e => e.patch === past && e.source !== 'scraped' && e.rank === AUTO_SCRAPE_RANK && !recentlyTried(`${past}|${e.rank}`));
+                        const mid = [...archiveIndex.values()].filter(e => e.patch === past && (e.source !== 'scraped' || e.partial) && e.rank === AUTO_SCRAPE_RANK && !recentlyTried(`${past}|${e.rank}`));
                         for (const e of mid) jobs.push({ period: past, rank: e.rank, kind: 'patch', id: `${past}|${e.rank}` });
                     }
                     if (!jobs.length) return;
@@ -3778,7 +3996,7 @@
                     if (!res || !res.ok) return; // a manual or Builds download is running: try again at the next check
                     for (const j of run) tried[j.id] = now;
                     dsKvSet('autoScrapeTried', tried).catch(() => {});
-                    scrapeState = { jobs: run.map(j => ({ period: j.period, rank: j.rank, kind: j.kind || `d${j.period}` })), index: 0, done: 0, total: 0, completed: 0, failed: 0, auto: true };
+                    scrapeState = { jobs: run.map(j => ({ period: j.period, rank: j.rank, kind: j.kind || `d${j.period}` })), index: 0, done: 0, total: 0, completed: 0, failed: 0, kept: 0, auto: true };
                     renderScrapeSection();
                     updateScrapeStatusLine();
                 } finally { fresh.scrapeStarting = false; }
@@ -3794,7 +4012,8 @@
             window.DD.freshness = {
                 check: freshnessCheck,
                 status: () => ({ running: !!fresh.running, checkedAt: fresh.checkedAt, metaAt: fresh.metaAt }),
-                _backdate: ms => { fresh.checkedAt -= ms; fresh.metaAt -= ms; }   // test hook: pretend the last check was ms ago
+                _backdate: ms => { fresh.checkedAt -= ms; fresh.metaAt -= ms; },  // test hook: pretend the last check was ms ago
+                _roleProbs: () => roleProbabilities                               // test hook: the role frequencies in use (getDataset)
             };
             // First-run setup check (onboarding.js): is Emerald+ data for the current patch saved on this PC? { ensure: true } downloads
             // exactly that one dataset (shared bucket, the same as choosing Emerald+ and Current Patch) without changing Rank / Time Period.
@@ -3808,7 +4027,9 @@
                     e = find();
                 }
                 const others = patch ? [...archiveIndex.values()].filter(x => x.patch === patch && x.rank !== rank).map(x => RANKS[x.rank] || x.rank) : [];
-                return { patch, rank, rankLabel: RANKS[rank] || rank, saved: !!e, games: e ? e.totalGames || 0 : 0, savedAt: e ? e.last_updated_utc || null : null, offline: !!offlineMode, others,
+                // savedAt with its time zone: the bucket's last_updated_utc has none and is UTC (onboarding's Date.parse would read it as local)
+                const at = e && e.last_updated_utc ? parseRunDate(e.last_updated_utc) : null;
+                return { patch, rank, rankLabel: RANKS[rank] || rank, saved: !!e, games: e ? e.totalGames || 0 : 0, savedAt: at && !isNaN(at) ? at.toISOString() : null, offline: !!offlineMode, others,
                     error: !e && ensure ? 'download failed' : null };
             };
             // --- END: Freshness ---
@@ -3836,7 +4057,8 @@
 
                     rankSelect.innerHTML = Object.entries(RANKS).map(([val, name]) => `<option value="${val}">${name}</option>`).join('');
                     
-                    const settings = await window.electronAPI.getSettings();
+                    // an unreadable settings file (not a missing one) rejects: start with defaults rather than not at all
+                    const settings = await window.electronAPI.getSettings().catch(() => ({}));
                     applySettings(settings);
 
                     // Data Dragon with the last good copy kept locally, so an offline start still has champion names and ids
@@ -3929,6 +4151,8 @@
                         <div class="grid-favorite-star">★</div>
                     </div>
                 `).join('');
+                // a champion chosen from the grid stays highlighted while the search rebuilds the tiles
+                if (selectedChampionFromGrid) { const t = championGrid.querySelector(`.champion-tile[data-champion-name="${selectedChampionFromGrid}"]`); if (t) t.classList.add('grid-selected'); }
                 updateAllGridFavoriteStars();
                 updateAvailabilityUI();
             }
@@ -4008,8 +4232,15 @@
                 swapSourceSlot = null;
                 recommendationTarget = null;
                 recommendationSearch.value = '';
+                // the old slot's list and "Best for you" card belong to the board just cleared: a search, filter or sort must not bring them back
+                lastRecommendations = []; lastPBestCandidates = []; recForceShow = null;
+                const recCard = document.getElementById('rec-card');
+                if (recCard) { recCard.innerHTML = ''; recCard.style.display = 'none'; }
+                // Live Tracking: the next poll repaints the board even when the champion select itself has not changed
+                lastKnownDraftState = ''; lastKnownPickState = '';
                 unavailableChampions.clear();
-                pickableChampions.clear();
+                liveBans.clear();
+                liveUnowned.clear();
                 lockedSlots.clear();
                 document.querySelectorAll('.lock-btn').forEach(icon => {
                     icon.classList.remove('locked');
@@ -4036,7 +4267,7 @@
             async function updateRecommendations() {
                 if (!recommendationTarget) {
                     // no slot chosen (the client picks your own slot during champion select; without it, nothing is chosen yet)
-                    recommendationList.innerHTML = `<li class="rec-hint">Click the 💡 on a slot (either team) to see the best champions for it. Champions already on the board are counted.</li>`;
+                    recommendationList.innerHTML = `<li class="rec-hint">Press SUGGEST under a slot (either team, or keys 1–5) to see the best champions for it. Champions already on the board are counted.</li>`;
                     return;
                 }
                 
@@ -4044,7 +4275,7 @@
                 
                 const dataset = await getDataset(timePeriodSelect.value, rankSelect.value);
                 if (!dataset) {
-                    recommendationList.innerHTML = `<li>No data available for ${timePeriodSelect.value}/${rankSelect.value}</li>`;
+                    recommendationList.innerHTML = `<li>No data available for ${periodLabel(timePeriodSelect.value)} · ${RANKS[rankSelect.value] || rankSelect.value}</li>`;
                     return;
                 }
                 attachReferencePrior(dataset, timePeriodSelect.value, rankSelect.value);
@@ -4296,19 +4527,19 @@
             }
 
             function showPersonalCellTooltip(li) {
-                const name = li.dataset.championName;
+                const name = li.dataset.championName, shown = bvEsc(champDisplayName(name));
                 const pk = lastRecommendations.find(p => p.champion === name);
-                const head = pk && pk.for_you != null ? `<p><b>For you: ${(pk.for_you * 100).toFixed(1)}%</b> = Exp WR ${(pk.exp_wr * 100).toFixed(1)}%${pk.personal.games ? ` ${fmtPersonalPct(pk.personal.offset)} your record` : ''}${Math.abs(pk.personal.penalty) >= 0.0005 ? ` ${fmtPersonalPct(pk.personal.penalty)} unfamiliar (estimate: you have ${pk.personal.games ? pk.personal.games + ' game' + (pk.personal.games === 1 ? '' : 's') : 'no games'} on it)` : ''}</p>` : '';
+                const head = pk && pk.for_you != null && recommendationTarget && recommendationTarget.side === 'left' ? `<p><b>For you: ${(pk.for_you * 100).toFixed(1)}%</b> = Exp WR ${(pk.exp_wr * 100).toFixed(1)}%${pk.personal.games ? ` ${fmtPersonalPct(pk.personal.offset)} your record` : ''}${Math.abs(pk.personal.penalty) >= 0.0005 ? ` ${fmtPersonalPct(pk.personal.penalty)} unfamiliar (estimate: you have ${pk.personal.games ? pk.personal.games + ' game' + (pk.personal.games === 1 ? '' : 's') : 'no games'} on it)` : ''}</p>` : '';
                 const info = getPersonalOffsets(currentDatasetSync())?.get(name);
                 const champKey = (allChampions.find(c => c.id === name) || {}).key;
                 const mastery = personalRaw && personalRaw.mastery ? personalRaw.mastery[champKey] : null;
                 const masteryStr = mastery ? `Mastery level ${mastery.level} · ${mastery.points.toLocaleString()} pts` : 'No mastery data';
                 if (!info) {
-                    ppTooltip.innerHTML = `<h4>${name}: For you</h4>${head}<p>${personalRaw ? "No Summoner's Rift games on this champion in your saved history yet." : 'Personal stats not loaded (is the League client running? Use "Refresh my stats").'}</p><p class="pp-muted">${masteryStr}</p>`;
+                    ppTooltip.innerHTML = `<h4>${shown}: For you</h4>${head}<p>${personalRaw ? "No Summoner's Rift games on this champion in your saved history yet." : 'Personal stats not loaded (is the League client running? Use "Refresh my stats").'}</p><p class="pp-muted">${masteryStr}</p>`;
                 } else {
                     const roles = Object.entries(info.roleGames).map(([r, n]) => `${r === '?' ? 'role unknown' : r.toLowerCase()} ${n}`).join(', ');
                     ppTooltip.innerHTML = `
-                        <h4>${name}: For you</h4>${head}<p>Your record on it: <b>${fmtPersonalPct(info.offset)}</b> ± ${(info.sd * 100).toFixed(1)}%</p>
+                        <h4>${shown}: For you</h4>${head}<p>Your record on it: <b>${fmtPersonalPct(info.offset)}</b> ± ${(info.sd * 100).toFixed(1)}%</p>
                         <p>${info.wins}W / ${info.games - info.wins}L in ${info.games} game${info.games === 1 ? '' : 's'} (${roles})<br>
                         Your WR ${(info.wr * 100).toFixed(1)}% vs expected ${(info.expected * 100).toFixed(1)}% (raw ${fmtPersonalPct(info.wr - info.expected)})</p>
                         <p>Your overall level vs. dataset (other champions): ${fmtPersonalPct(info.baseline)}<br>
@@ -4367,7 +4598,7 @@
             }
             // the decision card: your 3 best picks for you (from My pool when it is known), and one outside it if clearly better
             function decisionCard(picks, pool) {
-                const ok = picks.filter(p => p.for_you != null && !unavailableChampions.has(p.champion));
+                const ok = picks.filter(p => p.for_you != null && !unavailableChampions.has(p.champion) && !liveUnowned.has(p.champion));
                 if (!ok.length) return null;
                 const mine = pool ? ok.filter(p => pool.has(p.champion)) : ok;
                 const top = mine.slice().sort((a, b) => b.for_you - a.for_you).slice(0, 3);
@@ -4408,7 +4639,7 @@
                     html += `<div class="why-line why-blind"><span class="why-who"><b>Blind pick</b> <span class="why-cls">lane opponent not picked yet (${b.n} likely)</span></span><span class="why-val ${b.ev >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(b.ev)}</span><span class="why-raw">expected lane effect · downside risk ${(b.risk * 100).toFixed(1)}</span></div>`;
                     if (b.counters.length) html += `<div class="why-line why-counters">Counters to watch: ${b.counters.map(c => `<span class="why-counter"><img src="${champImgUrl(c.champion)}" alt="">${esc(champDisplayName(c.champion))} <b class="delta-neg">${pts(c.d)}</b> <span class="why-cls">${Math.round(c.share * 100)}% of picks</span></span>`).join('')}</div>`;
                 }
-                if (pick.for_you != null && pick.personal) {
+                if (pick.for_you != null && pick.personal && recommendationTarget && recommendationTarget.side === 'left') {   // your own side only
                     const pf = pick.personal;
                     html += `<div class="why-line why-total"><span class="why-who"><b>For you</b> <span class="why-cls">Exp WR + you on ${esc(champDisplayName(pick.champion))}</span></span><span class="why-val ${pick.for_you >= 0.5 ? 'delta-pos' : 'delta-neg'}">${pct(pick.for_you)}</span>` +
                         `<span class="why-raw">${pf.games ? `your record ${fmtPersonalPct(pf.offset)} (${pf.wins}-${pf.games - pf.wins})` : 'no games on it'}${Math.abs(pf.penalty) >= 0.0005 ? ` · unfamiliar ${fmtPersonalPct(pf.penalty)} (estimate)` : ''}</span></div>`;
@@ -4508,6 +4739,8 @@
             }
             function displayFilteredRecommendations() {
                 renderDraftProv();
+                // no slot chosen (after a reset): keep the hint, never a list worked out for an earlier board
+                if (!recommendationTarget) { renderDecisionCard([]); return; }
                 const roleRateThreshold = parseFloat(roleRateFilter.value) || 0;
                 const baseWrThreshold = parseFloat(baseWrFilter.value) || 0;
                 const searchQuery = recommendationSearch.value.toLowerCase();
@@ -4535,8 +4768,13 @@
                 const pool = myPoolToggle.checked ? myPoolSet() : null;
                 const poolNote = document.getElementById('my-pool-note');
                 if (poolNote) poolNote.textContent = myPoolToggle.checked && !pool ? 'needs your stats (League client or Riot key)' : (pool ? `${pool.size} champions` : '');
+                // the search matches the champion's name and its Data Dragon id, ignoring case, spaces and punctuation
+                // ("wukong" finds MonkeyKing, "kai'sa" / "kaisa" find Kai'Sa, "lee sin" finds LeeSin)
+                const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const q = norm(searchQuery);
                 let displayRecs = globallyFilteredRecs.filter(pick => {
-                    const searchMatch = !searchQuery || pick.champion.toLowerCase().includes(searchQuery);
+                    if (pick.champion === recForceShow) return true;
+                    const searchMatch = !q || norm(champDisplayName(pick.champion)).includes(q) || norm(pick.champion).includes(q);
                     const favoriteMatch = !favoritesOnly || (recommendationTarget && favorites[`${pick.champion}-${recommendationTarget.role}`]);
                     const poolMatch = !pool || pool.has(pick.champion);
                     return searchMatch && favoriteMatch && poolMatch;
@@ -4545,8 +4783,8 @@
                 displayRecs.sort((a, b) => {
                     let valA, valB;
                     if (sortBy === 'champion') {
-                        valA = a.champion;
-                        valB = b.champion;
+                        valA = champDisplayName(a.champion);
+                        valB = champDisplayName(b.champion);
                         return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
                     } else if (sortBy === 'rank') {
                         valA = rankMap.get(a.champion);
@@ -4563,7 +4801,10 @@
                     }
                 });
 
-                renderDecisionCard(globallyFilteredRecs, pool);
+                // "Best for you" and For you are about your own picks: an enemy slot gets neither (their numbers would be the enemy's
+                // Exp WR adjusted by your record), as in the mini window
+                const forMe = recommendationTarget.side === 'left';
+                renderDecisionCard(forMe ? globallyFilteredRecs : [], pool);
                 recommendationList.innerHTML = '';
                 if (displayRecs.length === 0) {
                     recommendationList.innerHTML = searchQuery.trim()
@@ -4582,8 +4823,9 @@
                     li.dataset.pp = JSON.stringify({ pp: pick.pp, mean: pick.pp_mean, sd: pick.pp_sd, count: pick.pp_count, total: pick.total_delta, ref: pick.ref_count, refLabel: pick.ref_label, refTau: pick.ref_tau_dev });
                     li.dataset.expwr = JSON.stringify({ wr: pick.exp_wr, sd: pick.exp_wr_sd, p50: pick.p_win_gt_50, base: pick.base_win_rate_shrunk, baseSd: pick.base_win_rate_sd, delta: pick.shrunk_delta, deltaSd: pick.shrunk_sd, count: pick.pp_count });
                     li.dataset.pbest = JSON.stringify({ p: pick.p_best, tie: pick.pbest_tie, n: pick.pbest_n });
-                    if (unavailableChampions.has(pick.champion)) {
+                    if (blockedForTarget(pick.champion)) {
                         li.classList.add('unavailable');
+                        if (!unavailableChampions.has(pick.champion)) li.title = 'Not in your champion pool (not owned or free this week)';
                     }
 
                     const baseShrunk = pick.base_win_rate_shrunk ?? pick.base_win_rate;
@@ -4591,7 +4833,7 @@
                     const baseWrStr = (baseShrunk * 100).toFixed(2) + '%' + (baseLow ? '*' : '');
                     li.dataset.base = JSON.stringify({ raw: pick.base_win_rate, roleFreq: pick.role_frequency, shrunk: baseShrunk, sd: pick.base_win_rate_sd, games: pick.base_games, low: baseLow });
                     const roleFreqStr = (pick.role_frequency * 100).toFixed(1) + '%';
-                    const youStr = pick.for_you == null ? '' : (pick.for_you * 100).toFixed(1) + '%';   // For you: Exp WR adjusted for your games on it
+                    const youStr = pick.for_you == null || !forMe ? '' : (pick.for_you * 100).toFixed(1) + '%';   // For you: Exp WR adjusted for your games on it
                     
                     const totalDeltaVal = pick.total_delta * 100;
                     const totalDeltaStr = (totalDeltaVal >= 0 ? '+' : '') + totalDeltaVal.toFixed(2);
@@ -4636,7 +4878,7 @@
                         <div class="detail-col rec-cell-stat">${rankStr}</div>
                         <div class="rec-cell-champ">
                             <img class="rec-img" src="${DDRAGON_BASE_URL}/cdn/${latestPatch}/img/champion/${champData.image.full}">
-                            <div class="rec-name">${pick.champion}${favoriteStar}</div>
+                            <div class="rec-name">${bvEsc(champDisplayName(pick.champion))}${favoriteStar}</div>
                             ${counterBadge}
                             <button class="why-btn${whyOpen.has(whyKey(pick.champion)) ? ' open' : ''}" data-champion="${pick.champion}" title="Why this pick: what makes up its Exp WR">why</button>
                             <button class="builds-jump" data-champion="${pick.champion}" title="Show this champion's builds (items, runes, spells)">&#9876;</button>
@@ -4658,11 +4900,26 @@
                 });
             }
 
+            // A champion placed from the grid. As in the client, one champion is picked only once: already picked in another slot,
+            // it moves here. A champion banned in the live champion select is refused (its tile flashes). -> false when refused.
+            function placeFromGrid(side, role, champ) {
+                if (liveBans.has(champ)) {
+                    const t = championGrid.querySelector(`.champion-tile[data-champion-name="${champ}"]`);
+                    if (t) { t.classList.add('tile-refused'); setTimeout(() => t.classList.remove('tile-refused'), 700); }
+                    if (window.DD.toast) window.DD.toast(`${champDisplayName(champ)} is banned in this champion select.`, { ms: 2500 });
+                    return false;
+                }
+                for (const s of document.querySelectorAll('.role-slot')) {
+                    if (s.dataset.champion === champ && !(s.dataset.side === side && s.dataset.role === role)) setChampionForSlot(s.dataset.side, s.dataset.role, null);
+                }
+                setChampionForSlot(side, role, champ);
+                return true;
+            }
             function handleRoleSlotClick(slot) {
                 const clickedSlotInfo = { side: slot.dataset.side, role: slot.dataset.role };
 
                 if (selectedChampionFromGrid) {
-                    setChampionForSlot(clickedSlotInfo.side, clickedSlotInfo.role, selectedChampionFromGrid);
+                    if (!placeFromGrid(clickedSlotInfo.side, clickedSlotInfo.role, selectedChampionFromGrid)) { clearSelections(); return; }
                     refreshUnavailableChampions();
                     if (recommendationTarget) updateRecommendations();
                     updateAnalysisView();
@@ -4687,7 +4944,7 @@
             function handleChampionTileClick(tile) {
                 const champName = tile.dataset.championName;
                 if (swapSourceSlot) {
-                    setChampionForSlot(swapSourceSlot.side, swapSourceSlot.role, champName);
+                    if (!placeFromGrid(swapSourceSlot.side, swapSourceSlot.role, champName)) { clearSelections(); return; }
                     refreshUnavailableChampions();
                     if (recommendationTarget) updateRecommendations();
                     updateAnalysisView();
@@ -4710,8 +4967,9 @@
 
                 const sourceLockId = `${source.side}-${source.role}`;
                 const destLockId = `${destination.side}-${destination.role}`;
-                setChampionForSlot(source.side, source.role, destChamp, !!destHover && !destChamp);
-                setChampionForSlot(destination.side, destination.role, sourceChamp, !!sourceHover && !sourceChamp);
+                // (a hovered champion moves as a hover: it used to vanish from the board until the next client event)
+                setChampionForSlot(source.side, source.role, destChamp || destHover, !!destHover && !destChamp);
+                setChampionForSlot(destination.side, destination.role, sourceChamp || sourceHover, !!sourceHover && !sourceChamp);
 
                 // A swap is the user saying "this champion plays this role": lock both slots so Live Tracking's role guess
                 // (inferRoles) keeps the order instead of swapping them back every second. Click the lock icon to undo.
@@ -4747,13 +5005,22 @@
                 }
             }
 
+            // Taken champions: the bans of the live champion select plus everything on the board. (Bans are kept here, so a manual
+            // swap, a grid placement or a right-click clear no longer makes banned champions pickable again until the next client event.)
             function refreshUnavailableChampions() {
-                const newUnavailable = new Set();
+                const newUnavailable = new Set(liveBans);
                 document.querySelectorAll('.role-slot').forEach(slot => {
                     if (slot.dataset.champion) newUnavailable.add(slot.dataset.champion);
                 });
                 unavailableChampions = newUnavailable;
                 updateAvailabilityUI();
+            }
+            // A row the selected slot can't take: taken or banned anywhere; a champion you don't own only when the slot is your own pick
+            // (your side, your assigned lane; any slot on your side in blind pick, where lanes aren't assigned).
+            function blockedForTarget(champ, target = recommendationTarget) {
+                if (unavailableChampions.has(champ)) return true;
+                if (!liveUnowned.size || !target || target.side !== 'left') return false;
+                return (!liveMyRole || target.role === liveMyRole) && liveUnowned.has(champ);
             }
 
             function clearSelections() {
@@ -4777,7 +5044,7 @@
                     slot.classList.add('selected');
                     const newTarget = !recommendationTarget || recommendationTarget.side !== slot.dataset.side || recommendationTarget.role !== slot.dataset.role;
                     recommendationTarget = { side: slot.dataset.side, role: slot.dataset.role };
-                    if (newTarget) recommendationSearch.value = '';   // a search typed for another slot would hide this one's list
+                    if (newTarget) { recommendationSearch.value = ''; recForceShow = null; }   // a search typed for another slot would hide this one's list
                     updateRecommendations();
                     drawConnector(slot);
                 } else if (lockBtn) {
@@ -4787,7 +5054,8 @@
                     handleRoleSlotClick(roleSlotEl);
                 } else if (championTileEl) {
                     handleChampionTileClick(championTileEl);
-                } else if (!e.target.closest('#search-champion')) {
+                } else if (!e.target.closest('#champion-grid-container')) {
+                    // (the grid's search box, its ▼ toggle and the gaps between tiles keep the slot you just clicked selected)
                     clearSelections();
                 }
             });
@@ -4844,6 +5112,7 @@
             function stopLiveTracking() {
                 if (lcuIntervalId) { clearInterval(lcuIntervalId); lcuIntervalId = null; }
                 liveMyRole = null; liveMyPick = null; liveAssigned = {}; liveMyLocked = false; liveInChampSelect = false;
+                runDeferredShownReload();   // a dataset replaced during champion select (storeScrapedDataset) reloads now
                 showPickOrder(null);
                 setLiveTrackingUI(false);
             }
@@ -4904,8 +5173,13 @@
                 setTimeout(() => {
                     if (recTabBtn && !recTabBtn.classList.contains('active')) recTabBtn.click();
                     const role = recommendationTarget && recommendationTarget.role;
-                    if (role && !whyOpen.has(whyKey(champion))) { whyOpen.add(whyKey(champion)); displayFilteredRecommendations(); }
-                    const li = [...recommendationList.querySelectorAll('li[data-champion-name]')].find(x => x.dataset.championName === champion);
+                    const rowOf = () => [...recommendationList.querySelectorAll('li[data-champion-name]')].find(x => x.dataset.championName === champion);
+                    let redraw = false;
+                    if (role && !whyOpen.has(whyKey(champion))) { whyOpen.add(whyKey(champion)); redraw = true; }
+                    // a pick the search, Favorites or My pool hides (the card's "outside your pool" pick): show that one row anyway
+                    if (role && !rowOf() && recForceShow !== champion) { recForceShow = champion; redraw = true; }
+                    if (redraw) displayFilteredRecommendations();
+                    const li = rowOf();
                     if (li) li.scrollIntoView({ block: 'center' });
                 }, 300);
             };
@@ -4922,7 +5196,7 @@
             function updateAvailabilityUI() {
                 document.querySelectorAll('#recommendation-list li').forEach(li => {
                     const champName = li.dataset.championName;
-                    li.classList.toggle('unavailable', unavailableChampions.has(champName));
+                    li.classList.toggle('unavailable', blockedForTarget(champName));
                 });
                 refreshPBestForAvailability();
             }
@@ -4943,10 +5217,20 @@
                 });
             }
 
+            let livePaintedSeq = 0;   // the newest poll whose answer was used (polls start every second and can overlap when the client is slow)
             async function updateFromLiveGame(force = false) {
+                const seq = ++livePollSeq;
                 const session = await window.electronAPI.getChampSelect();
-                if (!session) { if (liveInChampSelect) showPickOrder(null); liveMyRole = null; liveMyPick = null; liveAssigned = {}; liveMyLocked = false; liveInChampSelect = false; return; }
+                if (seq < livePaintedSeq) return;   // a newer poll already answered: this older state must not paint over it
+                if (!session) { livePaintedSeq = seq; if (liveInChampSelect) { showPickOrder(null); runDeferredShownReload(); } liveMyRole = null; liveMyPick = null; liveAssigned = {}; liveMyLocked = false; liveInChampSelect = false; return; }
                 liveInChampSelect = true;
+                // A new champion select (another gameId) starts without the last game's role locks (🔒). A missing gameId, or the same
+                // one after a moment without a session (a transient read failure), keeps them.
+                const gid = session.gameId || null;
+                if (gid && gid !== liveGameId) {
+                    liveGameId = gid;
+                    if (lockedSlots.size) { lockedSlots.clear(); document.querySelectorAll('.role-slot').forEach(updateLockIconUI); }
+                }
                 liveMyLocked = (session.actions || []).flat().some(a => a && a.type === 'pick' && a.completed && a.actorCellId === session.localPlayerCellId && a.championId > 0);
                 // your assigned lane (draft and ranked queues; empty in blind pick), used by the mini window when no slot is selected
                 const meCell = (session.myTeam || []).find(p => p.cellId === session.localPlayerCellId);
@@ -4959,27 +5243,31 @@
                 if (sessionState === lastKnownDraftState && !force) {
                     return;
                 }
-                lastKnownDraftState = sessionState;
 
                 const pickableChampIds = await window.electronAPI.getPickableChampions();
                 const pickableChampKeys = pickableChampIds ? new Set(pickableChampIds.map(String)) : null;
+                // (the state is remembered only by the poll that paints it, so an overlapping poll of the same state is not skipped)
+                if (seq < livePaintedSeq) return;
+                livePaintedSeq = seq;
+                lastKnownDraftState = sessionState;
 
-                const newUnavailable = new Set();
                 const bans = session.actions.flat().filter(a => a.type === 'ban' && a.completed);
+                liveBans = new Set();
                 for (const ban of bans) {
                     if (ban.championId !== 0 && champIdToName[ban.championId]) {
-                        newUnavailable.add(champIdToName[ban.championId]);
+                        liveBans.add(champIdToName[ban.championId]);
                     }
                 }
                 
+                // Champions you can't pick (not owned, not free this week) are kept apart from the bans: they only block your own
+                // pick (blockedForTarget), never the enemy's options, the Bans tab or a Duo partner's pool.
+                liveUnowned = new Set();
                 if (pickableChampKeys) {
                     allChampions.forEach(champ => {
-                        if (!pickableChampKeys.has(champ.key)) {
-                            newUnavailable.add(champ.id);
-                        }
+                        if (!pickableChampKeys.has(champ.key)) liveUnowned.add(champ.id);
                     });
                 }
-                unavailableChampions = newUnavailable;
+                unavailableChampions = new Set(liveBans);
 
                 const myPlayers = session.myTeam;
                 const theirPlayers = session.theirTeam;
@@ -4992,27 +5280,37 @@
                     map.set(role, champName);
                 }
 
-                const myPicks = myPlayers.filter(p => p.championId !== 0).map(p => champIdToName[p.championId]);
-                const theirPicks = theirPlayers.filter(p => p.championId !== 0).map(p => champIdToName[p.championId]);
-                const myHovers = myPlayers.filter(p => p.championId === 0 && p.championPickIntent !== 0).map(p => champIdToName[p.championPickIntent]);
-                const theirHovers = theirPlayers.filter(p => p.championId === 0 && p.championPickIntent !== 0).map(p => champIdToName[p.championPickIntent]);
+                // A champion counts as picked only once its pick action is completed (as liveMyLocked). During a player's own pick
+                // turn the client already puts the selection in championId: that is still a hover, shown greyed and left out of the
+                // maths unless Hovers is on. Players with no pick action at all (modes without draft actions) keep championId as the pick.
+                const pickActs = (session.actions || []).flat().filter(a => a && a.type === 'pick');
+                const doneCells = new Set(pickActs.filter(a => a.completed).map(a => a.actorCellId));
+                const openCells = new Set(pickActs.filter(a => !a.completed).map(a => a.actorCellId));
+                const pickOf = p => (p.championId && (doneCells.has(p.cellId) || !openCells.has(p.cellId)) ? champIdToName[p.championId] || null : null);
+                const hoverOf = p => (pickOf(p) ? null : champIdToName[p.championId || p.championPickIntent] || null);
+                const myPicks = myPlayers.map(pickOf).filter(Boolean);
+                const theirPicks = theirPlayers.map(pickOf).filter(Boolean);
+                const myHovers = myPlayers.map(hoverOf).filter(Boolean);
+                const theirHovers = theirPlayers.map(hoverOf).filter(Boolean);
 
                 // Your team: every champion goes to the lane of the player who picked it (the client's assignedPosition). A manual swap
                 // (locked slot) still wins; players without an assigned lane (blind pick, customs) fall back to the role guess.
                 // Enemy team: lanes are guessed from how often each champion is played in each role (inferRoles); swaps correct it.
-                const byPosition = (players, field, locked, taken = {}) => {
+                const byPosition = (players, champOf, locked, taken = {}) => {
                     const out = {}, lockedChamps = new Set(locked.values());
                     for (const p of players) {
-                        const role = LCU_POSITION[String(p.assignedPosition || '').toLowerCase()], champ = champIdToName[p[field]];
-                        if (!role || !champ || (field === 'championPickIntent' && p.championId) || locked.has(role) || lockedChamps.has(champ) || out[role] || taken[role] || Object.values(taken).includes(champ)) continue;
+                        const role = LCU_POSITION[String(p.assignedPosition || '').toLowerCase()], champ = champOf(p);
+                        if (!role || !champ || locked.has(role) || lockedChamps.has(champ) || out[role] || taken[role] || Object.values(taken).includes(champ)) continue;
                         out[role] = champ;
                     }
                     return out;
                 };
-                const myAssignments = inferRoles(myPicks, myLockedSlots, byPosition(myPlayers, 'championId', myLockedSlots));
-                const theirAssignments = inferRoles(theirPicks, theirLockedSlots);
+                // a lane locked to a hovered champion (a swapped hover) is kept for it: a pick made meanwhile can't take that lane
+                const heldFor = (locked, hovers) => new Set([...locked].filter(([, c]) => hovers.includes(c)).map(([r]) => r));
+                const myAssignments = inferRoles(myPicks, myLockedSlots, byPosition(myPlayers, pickOf, myLockedSlots), heldFor(myLockedSlots, myHovers));
+                const theirAssignments = inferRoles(theirPicks, theirLockedSlots, {}, heldFor(theirLockedSlots, theirHovers));
 
-                const myHoverAssignments = inferRoles(myHovers, myLockedSlots, { ...myAssignments, ...byPosition(myPlayers, 'championPickIntent', myLockedSlots, myAssignments) });
+                const myHoverAssignments = inferRoles(myHovers, myLockedSlots, { ...myAssignments, ...byPosition(myPlayers, hoverOf, myLockedSlots, myAssignments) });
                 const theirHoverAssignments = inferRoles(theirHovers, theirLockedSlots, theirAssignments);
 
                 roles.forEach(role => {
@@ -5039,9 +5337,10 @@
                 }
             }
             
-            function inferRoles(picks, lockedChamps, existingAssignments = {}) {
+            // reserved: lanes the guess must leave free (locked to a hovered champion); ignored if the picks would not fit otherwise
+            function inferRoles(picks, lockedChamps, existingAssignments = {}, reserved = new Set()) {
                 let finalAssignments = {};
-                
+
                 for (const [role, champ] of lockedChamps.entries()) {
                     if (picks.includes(champ) && !Object.values(existingAssignments).includes(champ)) {
                         finalAssignments[role] = champ;
@@ -5050,6 +5349,8 @@
 
                 let availableRoles = roles.filter(role => !finalAssignments[role] && !existingAssignments[role]);
                 let availableChamps = picks.filter(champ => !Object.values(finalAssignments).includes(champ) && !Object.values(existingAssignments).includes(champ));
+                const unreserved = availableRoles.filter(role => !reserved.has(role));
+                if (unreserved.length >= availableChamps.length) availableRoles = unreserved;
 
                 if (availableChamps.length === 0) return { ...existingAssignments, ...finalAssignments };
 
@@ -5118,6 +5419,8 @@
                     lockedSlots.delete(lockId);
                     icon.classList.remove('locked');
                     icon.textContent = '🔓';
+                    // handed back to the automatic guess: re-guess now, not at the next client event
+                    if (lcuIntervalId && liveInChampSelect) updateFromLiveGame(true);
                 } else {
                     let champIsLockedElsewhere = false;
                     for (const[id, champ] of lockedSlots.entries()) {
@@ -5178,7 +5481,7 @@
                     const isFavorited = favorites[key];
                     return `<div class="context-menu-item ${isFavorited ? 'favorited' : ''}" data-champion="${championName}" data-role="${role}">
                                     <span class="star">${isFavorited ? '★' : '☆'}</span>
-                                    ${isFavorited ? 'Remove from' : 'Add to'} ${role} Favorites
+                                    ${isFavorited ? 'Remove from' : 'Add to'} ${BV_ROLE_LABELS[role] || role} Favorites
                                 </div>`;
                 }).join('') + `<div class="context-menu-item context-menu-hub" data-hub="${championName}"><span class="star">›</span>Champion page</div>` +
                     `<div class="context-menu-item context-menu-hub" data-builds="${championName}"><span class="star">›</span>Builds</div>` +
@@ -5271,7 +5574,7 @@
                     ? '<span style="color: var(--text-secondary);">No champions yet</span>'
                     : `<div style="display:flex; height:8px; border-radius:4px; overflow:hidden; flex:1; background:var(--border-color);"><div style="width:${100 - ap}%; background:var(--red-neg);"></div><div style="width:${ap}%; background:var(--accent-color);"></div></div><span style="font-size:0.75rem; white-space:nowrap;">${100 - ap}% AD / ${ap}% AP</span>`;
                 const warnHTML = warns.map(t => `<span style="color: var(--yellow-warn); font-size:0.75rem; margin-right:8px;">⚠ ${t}</span>`).join('');
-                const nm = names => names.length ? ` title="${names.join(', ')}"` : '';
+                const nm = names => names.length ? ` title="${names.map(id => bvEsc(champDisplayName(id))).join(', ')}"` : '';
                 return `
                     <div style="flex:1; padding:6px 10px; background-color:#181818; border-radius:4px; font-size:0.8rem;">
                         <div style="font-weight:bold; margin-bottom:4px;">${sideLabel}</div>
@@ -5300,7 +5603,7 @@
                 analysisView.innerHTML = '<div>Analyzing draft...</div>';
                 const dataset = await getDataset(timePeriodSelect.value, rankSelect.value);
                 if (!dataset) {
-                    analysisView.innerHTML = `<div>No data available for ${timePeriodSelect.value}/${rankSelect.value}</div>`;
+                    analysisView.innerHTML = `<div>No data available for ${periodLabel(timePeriodSelect.value)} · ${RANKS[rankSelect.value] || rankSelect.value}</div>`;
                     return;
                 }
 
@@ -5357,6 +5660,7 @@
                     if (v && v.left_wr != null) pinnedDraft = { left, right, wr: v.left_wr };
                 } else if (what === 'restore' && pinnedDraft) {
                     for (const side of ['left', 'right']) for (const r of roles) setChampionForSlot(side, r, pinnedDraft[side][r] || null);
+                    refreshUnavailableChampions();   // the restored picks are taken again, the swapped-out ones free (bans are kept)
                     await handleFilterChange();
                     return;
                 }
@@ -5397,7 +5701,7 @@
                         <div class="analysis-verdict-split">Champion strength <b class="${v.strength_pts >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(v.strength_pts)}</b> pts ·
                             Matchups + synergy <b class="${v.interact_pts >= 0 ? 'delta-pos' : 'delta-neg'}">${pts(v.interact_pts)}</b> pts (for the left team)
                             ${!v.complete ? `<span class="analysis-muted"> · partial draft (${v.n.left}v${v.n.right})</span>` : ''}
-                            ${v.missing.length ? `<span class="analysis-muted"> · no data for ${v.missing.map(bvEsc).join(', ')} in that role</span>` : ''}</div>
+                            ${v.missing.length ? `<span class="analysis-muted"> · no data for ${v.missing.map(id => bvEsc(champDisplayName(id))).join(', ')} in that role</span>` : ''}</div>
                     </div>`;
                 }
                 if (v && v.left_wr != null && analysisData.grid) verdictHTML += whatIfHtml(analysisData.grid.left, analysisData.grid.right, v.left_wr);
@@ -5425,9 +5729,9 @@
 
                         return `
                             <div data-champion-name="${champData.champion}" data-team="${side}" data-role="${role}">
-                                <img src="${imgSrc}" alt="${champData.champion}">
+                                <img src="${imgSrc}" alt="${bvEsc(champDisplayName(champData.champion))}">
                                 <div class="analysis-champ-info">
-                                    <div class="analysis-champ-name">${champData.champion}</div>
+                                    <div class="analysis-champ-name">${bvEsc(champDisplayName(champData.champion))}</div>
                                     <div class="analysis-champ-stats">${baseWrStr} | <span class="${deltaClass}" title="Raw interactions only (no champion strength)">${deltaStr}</span>${expStr}</div>
                                 </div>
                             </div>`;
@@ -5568,8 +5872,8 @@
                 } else if (lastRecommendations.length > 0) {
                     displayFilteredRecommendations();
                 }
-                if (activeTab === 'analysis') {
-                    await updateAnalysisView();
+                if (activeTab === 'analysis' || activeTab === 'bans') {
+                    await updateAnalysisView();   // (draws the Bans tab too when it is open: Rank, Time Period and Min Games change it)
                 }
                 if (await getDataset(timePeriodSelect.value, rankSelect.value)) {
                     updateDataInfo();
@@ -6172,26 +6476,29 @@
             // Saved Coachless data of one champion-role for the patches the Time Period selects (nothing is downloaded here):
             // the champion hub's summary and build coaching read it. -> null when nothing is saved.
             //   rec: the pooled record; legendaries/boots: every "all slots" row with its sample-adjusted WPA and PP (bvPP)
+            //   missing: patches of the period with nothing saved for this champion-role (the hub's "· 16.19 missing")
             async function buildsSavedFor(champion, role) {
                 const ctx = await buildsResolveData();
-                const rec = ctx.dataset && ctx.dataset.champions[`${champion}|${role}`];
-                if (!rec) return { saved: false, patches: ctx.want };
+                const id = `${champion}|${role}`;
+                const missing = ctx.want.filter(p => { const ds = buildsDatasetCache.get(p); return !(ds && ((ds.champions && ds.champions[id]) || (ds.skipped || []).includes(id))); });
+                const rec = ctx.dataset && ctx.dataset.champions[id];
+                if (!rec) return { saved: false, patches: ctx.want, missing };
                 await buildsLoadStatic();
                 const scored = (rows, kind) => (rows || []).map(r => { const p = bvPP(r, kind, r.buys); const i = bvItem(r.id); return { id: r.id, name: i.name, img: i.img, wpa: r.wpa, buys: r.buys, pickRate: r.pickRate, adj: p ? p.mean : r.wpa, pp: p ? p.pp : null }; });
                 const t = rec.items || {};
-                return { saved: true, patches: ctx.used, rec, games: rec.games, legendaries: scored(t.legendaries && t.legendaries.all, 'legendaries'), boots: scored(t.boots && t.boots.all, 'boots') };
+                return { saved: true, patches: ctx.used, missing, rec, games: rec.games, legendaries: scored(t.legendaries && t.legendaries.all, 'legendaries'), boots: scored(t.boots && t.boots.all, 'boots') };
             }
             window.DD.buildsTables = buildsSavedFor;
             // Pure helpers, exposed for tests: patch span labels, day windows as patches, and the pooled-PP maths (D3)
             window.DD.patchLabels = { range: patchRangeLabel, missingIn: patchesMissingIn, missingNote: patchMissingNote, dayPatches: dayPeriodPatches };
-            window.DD.adaptive = { patches: adaptivePatches, championStats: adaptiveChampionStats, poolCols: poolColsAdaptive, toCols: matchupsToCols, toMap: colsToMap, load: getDataset, MIN: ADAPTIVE_MIN };
-            window.DD.buildsMath = { combineBuilds, bvPP, bvBetweenVar };
+            window.DD.adaptive = { patches: adaptivePatches, championStats: adaptiveChampionStats, changesLookup: adaptiveChangesLookup, poolCols: poolColsAdaptive, toCols: matchupsToCols, toMap: colsToMap, load: getDataset, MIN: ADAPTIVE_MIN };
+            window.DD.buildsMath = { combineBuilds, bvPP, bvBetweenVar, bvBestSpells };
             window.DD.buildsSummary = async (champion, role) => {
                 const s = await buildsSavedFor(champion, role);
                 if (!s.saved) return s;
                 const groups = bvRecommendedGroups(s.rec).map(([title, rows]) => ({ title, items: rows.map(r => { const i = bvItem(r.id); return { id: r.id, name: i.name, img: i.img, wpa: r.wpa }; }) }));
                 const ks = bvChoose(s.rec.runes && s.rec.runes.keystones, 'keystones', 0.05), sp = (s.rec.spells || []).slice().sort((a, b) => b.games - a.games).slice(0, 2);
-                return { saved: true, patches: s.patches, games: s.games, groups,
+                return { saved: true, patches: s.patches, missing: s.missing, games: s.games, groups,
                     keystone: ks ? { id: ks.id, name: bvRune(ks.id).name, img: bvRune(ks.id).img, wpa: ks.wpa, pick: ks.pickRate } : null,
                     spells: sp.map(x => ({ id: x.id, name: bvSpell(x.id).name, img: bvSpell(x.id).img, pick: x.pickRate })) };
             };
@@ -6239,8 +6546,17 @@
                 // Flash is close to universal: keep it whenever it is common, then the best other spell
                 const flash = rows.find(r => Number(r.id) === FLASH && r.pickRate >= 0.3);
                 const first = role === 'JUNGLE' ? SMITE : (flash ? FLASH : (pool[0] && Number(pool[0].id)));
-                const second = pool.map(r => Number(r.id)).find(id => id !== first);
+                // (a jungler's first spell is Smite, so a common Flash is the second: its WPA is ~0 because nearly everyone takes it)
+                const second = role === 'JUNGLE' && flash ? FLASH : pool.map(r => Number(r.id)).find(id => id !== first);
                 return first && second ? [first, second] : null;
+            }
+            // The record the Builds panel shows: the Time Period's pooled record, with the vs matchup merged in once it is loaded.
+            // buildsPaint draws it and buildsApply sends it, so "Send to client" sends what is on screen. -> { rec, vsState }
+            function bvShownRecord(ctx, st) {
+                const rec = ctx && ctx.dataset && ctx.dataset.champions[`${st.champion}|${st.role}`];
+                if (!rec) return { rec: null, vsState: null };
+                const vsState = bvMatchupState(ctx, st);
+                return { rec: vsState && vsState.rec ? bvMergeMatchup(vsState.rec, rec) : rec, vsState };
             }
             function buildsApplyHtml(rec, st) {
                 const can = !!(window.electronAPI && window.electronAPI.feature);
@@ -6254,15 +6570,29 @@
                     <button data-bapply="runes"${rp.page ? '' : ' disabled'} title="Create or update a 'DravenGap' rune page with these runes and make it current">Apply runes</button>${preview}
                     <button data-bapply="spells"${spells ? '' : ' disabled'} title="Set these summoner spells (champion select only; Flash stays on its key)">Set spells</button>${sp}
                     <button data-bapply="items" title="Save the Recommended Item Set as a 'DravenGap' item set for this champion (shown in the in-game shop)">Save item set</button>
-                    <span id="builds-apply-msg" class="apply-msg">${bvEsc(buildsApplyMsg && buildsApplyMsg.key === `${st.champion}|${st.role}` ? buildsApplyMsg.text : '')}</span></div>`;
+                    <span id="builds-apply-msg" class="apply-msg">${buildsApplyMsgFor(st)}</span></div>`;
             }
-            let buildsApplyMsg = null; // { key, text } last result for this champion-role
+            // The last Send to client result { key, kind, keystone, text, extra }: shown (with its button, e.g. Replace current page) only
+            // for the champion-role it belongs to; a rune message only while the same keystone is selected (DravenGap's one rune page
+            // is shared, so another champion's runes, or another keystone, make it stale; a Send from elsewhere clears it).
+            let buildsApplyMsg = null;
+            function buildsApplyMsgFor(st) {
+                const m = buildsApplyMsg;
+                if (!m || m.key !== `${st.champion}|${st.role}` || (m.kind === 'runes' && String(m.keystone) !== String(st.keystone))) return '';
+                return bvEsc(m.text) + (m.extra || '');
+            }
             async function buildsApply(kind, replaceCurrent) {
                 const st = buildsState, ctx = buildsCtx;
-                const rec = ctx && ctx.dataset && ctx.dataset.champions[`${st.champion}|${st.role}`];
+                const rec = ctx ? bvShownRecord(ctx, st).rec : null;   // what the panel shows: with a vs matchup, its spells and item set
                 if (!rec) return;
                 const key = `${st.champion}|${st.role}`, name = `${bvChampName(st.champion)} ${BV_ROLE_LABELS[st.role] || st.role}`;
-                const say = (text, extra = '') => { buildsApplyMsg = { key, text }; const el = document.getElementById('builds-apply-msg'); if (el) el.innerHTML = bvEsc(text) + extra; };
+                const msgOf = { key, kind, keystone: st.keystone };
+                // the result lands in this champion-role's bar only (not in another champion's, if the user switched meanwhile)
+                const say = (text, extra = '') => {
+                    buildsApplyMsg = { ...msgOf, text, extra };
+                    const el = document.getElementById('builds-apply-msg');
+                    if (el && `${buildsState.champion}|${buildsState.role}` === key) el.innerHTML = buildsApplyMsgFor(buildsState);
+                };
                 const api = window.electronAPI.feature;
                 let res;
                 say('Sending…');
@@ -6270,6 +6600,7 @@
                     if (kind === 'runes') {
                         const rp = bvBuildRunePage(rec, st);
                         if (!rp.page) return say(rp.error);
+                        msgOf.keystone = rp.keystone.id;   // the keystone of the page actually sent
                         res = await api.invoke('lcu:apply-runes', { page: rp.page, name, replaceCurrent: !!replaceCurrent });
                         if (res.ok) return say(`Rune page "${res.name}" ${res.action} and set as current.`);
                         if (res.code === 'PAGES_FULL') return say(res.error, ' <button data-bapply="runes-replace">Replace current page</button>');
@@ -6281,7 +6612,8 @@
                     } else if (kind === 'items') {
                         const champ = allChampions.find(c => c.id === st.champion);
                         const blocks = bvRecommendedGroups(rec).map(([title, rows]) => ({ type: `${title} (WPA)`, items: rows.map(r => Number(r.id)) }));
-                        res = await api.invoke('lcu:apply-itemset', { championKey: Number(champ && champ.key), map: 11, title: name, blocks });
+                        const title = rec._vs && st.vs ? `${name} vs ${bvChampName(st.vs)}` : name;
+                        res = await api.invoke('lcu:apply-itemset', { championKey: Number(champ && champ.key), map: 11, title, blocks });
                         if (res.ok) return say(`Item set "${res.title}" saved (${res.blocks} groups): open the shop in game to use it.`);
                     }
                 } catch (e) { res = { error: e.message }; }
@@ -6368,9 +6700,7 @@
                     buildsBody.innerHTML = `<div class="builds-empty"><h3>Pick a champion</h3><p>Type a champion above, or <b>double-click a champion portrait in the draft</b>. Coachless data (Emerald+ item, rune and summoner spell WPA) is downloaded on demand for that champion and role and saved on this PC.</p></div>`;
                     return;
                 }
-                let rec = ctx.dataset && ctx.dataset.champions[`${st.champion}|${st.role}`];
-                const vsState = rec ? bvMatchupState(ctx, st) : null;
-                if (vsState && vsState.rec) rec = bvMergeMatchup(vsState.rec, rec);
+                const { rec, vsState } = bvShownRecord(ctx, st);
                 const lacking = bvLackingPatches(ctx, st);
                 const pl = bvPeriodLabel(ctx);
                 let html = `<div class="dg-prov-row">${window.DD.provChip('builds', buildsProvInfo(ctx, st, rec, pl + patchMissingNote(lacking), lacking))}</div>`;
@@ -6382,6 +6712,10 @@
                 html += bvFetchStatus(ctx, st);
                 if (vsState) html += bvMatchupNote(vsState, st);
                 if (!rec) { buildsBody.innerHTML = html; return; }
+                const bkey = `${st.champion}|${st.role}`;
+                // a detail download error only sticks to its own champion-role (as bvFetchStatus does for buildsFetch)
+                if (buildsDetailLoading && buildsDetailLoading.error && buildsDetailLoading.key !== bkey) buildsDetailLoading = null;
+                const detailErr = buildsDetailLoading && buildsDetailLoading.error;
                 html += bvDetailPrompt(ctx, st);
                 const runesHtml = bvRunesHtml(rec); // settles the selected keystone / secondary tree used by "Apply runes"
                 html += buildsApplyHtml(rec, st);
@@ -6395,8 +6729,13 @@
                 if (hasSlots && !slotTabs.some(([k]) => k === st.slot)) st.slot = 'all';
                 const table = (rec.items[st.itemType] || {})[hasSlots ? st.slot : 'all'];
                 const rows = table || [];
-                if (!table && detailOnClick && !(buildsDetailLoading && buildsDetailLoading.error)) setTimeout(() => loadBuildsDetailFor(st.champion, st.role), 0);
+                // a detail table (Components, a boot slot) that is not saved yet, or saved long before the overview's last refresh, loads
+                // when opened; after a failure for this champion-role it waits for the button
+                const detailTab = st.itemType === 'components' || (st.itemType === 'boots' && st.slot !== 'all');
+                const staleDetail = detailOnClick && detailTab && ctx.used.some(p => { const ds = buildsDatasetCache.get(p), r = ds && ds.champions && ds.champions[bkey]; return r && buildsRecordHasDetail(r) && bvDetailStale(ds, r, bkey); });
+                if ((!table || staleDetail) && detailOnClick && !detailErr) setTimeout(() => loadBuildsDetailFor(st.champion, st.role), 0);
                 const itemsTable = table || !detailOnClick ? bvStatsTable(rows, { kind: 'items', ppKind: st.itemType, countKey: 'buys', countLabel: 'Buys', info: bvItem })
+                    : detailErr ? `<div class="builds-note"><span class="builds-warn">${bvEsc(detailErr)}</span> <button data-bdetail="${bvEsc(bkey)}">Load components, boot slots &amp; rune details</button></div>`
                     : `<div class="builds-note builds-muted">Loading this table from Coachless… it computes these on request (up to ~30 s per patch).</div>`;
                 html += `<div class="builds-main"><div class="builds-items"><div class="builds-set-title">Items</div>` +
                     `<div class="builds-tabs">${types.map(([k, n]) => `<button class="builds-tab${k === st.itemType ? ' active' : ''}" data-bitype="${k}">${n}</button>`).join('')}</div>` +
@@ -6430,8 +6769,11 @@
                     note: 'Fetched on demand for one champion and role at a time, never in bulk. The current patch is fetched again when you open it after 24 h.',
                     onRefresh: canBuilds && window.electronAPI && window.electronAPI.coachlessChampion ? async () => {
                         if (buildsFetch && !buildsFetch.error) return { message: 'A download is already running.' };
+                        // only the current patch changes: finished patches in use are not downloaded again
+                        const todo = ctx.used.filter(p => p === currentPatchLabel());
+                        if (!todo.length) return { message: 'Only finished patches are in use: their data does not change.' };
                         buildsFetch = null;
-                        await fetchBuildsOnDemand(st.champion, st.role, ctx.used.slice());
+                        await fetchBuildsOnDemand(st.champion, st.role, todo, true);
                         return { message: buildsFetch && buildsFetch.error ? buildsFetch.error : 'Downloaded again from Coachless.' };
                     } : null
                 };
@@ -6473,10 +6815,14 @@
             // Rune detail (sub-runes, shards) and components stay those of all games: Coachless computes detail tables per champion
             // only, and those are saved with the champion's own builds record (storeBuildsChampion / storeBuildsDetail, 'builds' store).
             const BV_MATCHUP_EMPTY_MS = 24 * 3600 * 1000;
+            const BV_MATCHUP_RETRY_MS = 60 * 1000;   // a failed matchup download is tried again on a view this much later (or with Try again)
             const buildsMatchup = new Map(); // "patch|champ|role|vs" -> { status: 'loading'|'ready'|'empty'|'error', rec, error, reading, fromStore }
             function bvMatchupState(ctx, st) {
                 if (!st.vs || !st.champion || !st.role || !ctx.want || !ctx.want.length) return null;
                 const patch = ctx.want[0], key = `${patch}|${st.champion}|${st.role}|${st.vs}`;
+                // a failed download is asked for again on a later view: once Coachless' wait is over (rate limit), else after a minute
+                const cur = buildsMatchup.get(key);
+                if (cur && cur.status === 'error' && Date.now() >= buildsRateBlockedUntil && (cur.rate || Date.now() - (cur.at || 0) >= BV_MATCHUP_RETRY_MS)) buildsMatchup.delete(key);
                 if (!buildsMatchup.has(key)) {
                     buildsMatchup.set(key, { status: 'loading', reading: true }); // reading the saved copy: nothing is shown yet
                     bvLoadMatchup(key, patch, st.champion, st.role, st.vs);
@@ -6515,8 +6861,8 @@
             }
             async function bvFetchMatchup(key, patch, champion, role, vs) {
                 const keyOf = id => { const c = allChampions.find(x => x.id === id); return c ? Number(c.key) : null; };
-                if (!window.electronAPI || !window.electronAPI.coachlessChampion) buildsMatchup.set(key, { status: 'error', error: 'Coachless is only available in the desktop app.' });
-                else if (Date.now() < buildsRateBlockedUntil) buildsMatchup.set(key, { status: 'error', error: `Coachless rate limit: try again after ${new Date(buildsRateBlockedUntil).toLocaleTimeString()}.` });
+                if (!window.electronAPI || !window.electronAPI.coachlessChampion) buildsMatchup.set(key, { status: 'error', error: 'Coachless is only available in the desktop app.', at: Date.now() });
+                else if (Date.now() < buildsRateBlockedUntil) buildsMatchup.set(key, { status: 'error', error: `Coachless rate limit: try again after ${new Date(buildsRateBlockedUntil).toLocaleTimeString()}.`, at: Date.now(), rate: true });
                 else {
                     buildsMatchup.set(key, { status: 'loading' });
                     if (buildsShown()) buildsPaint(); // "Downloading ..." (the saved copy has been checked by now)
@@ -6528,7 +6874,7 @@
                         buildsMatchup.set(key, res.record ? { status: 'ready', rec: res.record } : { status: 'empty' });
                     } else {
                         if (res && res.code === 'RATE_LIMITED' && res.retryAt) buildsRateBlockedUntil = res.retryAt;
-                        buildsMatchup.set(key, { status: 'error', error: (res && res.error) || 'unknown error' });
+                        buildsMatchup.set(key, { status: 'error', error: (res && res.error) || 'unknown error', at: Date.now(), rate: !!(res && res.code === 'RATE_LIMITED') });
                     }
                 }
                 if (buildsShown()) buildsPaint();
@@ -6550,7 +6896,11 @@
                 const vsName = bvEsc(bvChampName(v.vs)), me = bvEsc(bvChampName(st.champion));
                 if (v.reading) return ''; // looking for the copy saved on this PC
                 if (v.status === 'loading') return `<div class="builds-note builds-vs-note">Downloading <b>${me} vs ${vsName}</b> (patch ${bvEsc(v.patch)}) from Coachless… a matchup is computed on request, up to ~30 s.</div>`;
-                if (v.status === 'error') return `<div class="builds-note builds-vs-note"><span class="builds-warn">${me} vs ${vsName}: ${bvEsc(v.error)}</span> Showing all games.</div>`;
+                if (v.status === 'error') {
+                    if (v.rate) bvRepaintAfterBlock();   // the note and its button update by themselves when the wait is over
+                    return `<div class="builds-note builds-vs-note"><span class="builds-warn">${me} vs ${vsName}: ${bvEsc(v.error)}</span> Showing all games. ` +
+                        `<button data-bvretry="${bvEsc(`${v.patch}|${st.champion}|${st.role}|${v.vs}`)}"${Date.now() < buildsRateBlockedUntil ? ' disabled' : ''}>Try again</button></div>`;
+                }
                 if (v.status === 'empty') return `<div class="builds-note builds-vs-note">No Emerald+ games of ${me} vs ${vsName} on patch ${bvEsc(v.patch)}: showing all games.</div>`;
                 return `<div class="builds-note builds-vs-note"><b>Matchup: ${me} vs ${vsName}</b>, patch ${bvEsc(v.patch)}, ${(v.rec.games || 0).toLocaleString()} games${v.fromStore && v.at ? ` (saved on this PC, fetched ${formatTimeAgo(new Date(v.at))})` : ''}. Items, spells and keystones are from these games only (PP accounts for the smaller sample); sub-runes, shards and components are from all games.</div>`;
             }
@@ -6560,12 +6910,18 @@
                 if (buildsVsList.childElementCount) return;
                 buildsVsList.innerHTML = allChampions.map(c => c.name).sort().map(n => `<option value="${bvEsc(n)}"></option>`).join('');
             });
-            buildsVsInput.addEventListener('input', () => {
-                const v = buildsVsInput.value.trim().toLowerCase();
-                const hit = allChampions.find(c => c.name.toLowerCase() === v);
-                if (hit && hit.id !== buildsState.vs) { buildsState.vs = hit.id; buildsPaint(); }
+            // the opponent box completes like the champion box ("ze" -> Zed); "vi" waits for Enter / the dropdown (Vi, Viego, Viktor),
+            // so typing "Viego" no longer downloads the matchup against Vi on the way
+            buildsVsInput.addEventListener('input', e => {
+                const one = window.DD.completeChampion(buildsVsInput, allChampions, e);
+                if (one && one.id !== buildsState.vs) { buildsState.vs = one.id; buildsPaint(); }
             });
-            buildsVsInput.addEventListener('change', () => { if (!buildsVsInput.value.trim() && buildsState.vs) { buildsState.vs = null; buildsPaint(); } });
+            buildsVsInput.addEventListener('change', () => {
+                const v = buildsVsInput.value.trim();
+                if (!v) { if (buildsState.vs) { buildsState.vs = null; buildsPaint(); } return; }
+                const one = window.DD.uniqueChampion(v, allChampions);
+                if (one && one.id !== buildsState.vs) { buildsState.vs = one.id; buildsPaint(); }
+            });
             document.getElementById('builds-vs-clear').addEventListener('click', () => { buildsState.vs = null; buildsVsInput.value = ''; buildsPaint(); });
             document.getElementById('builds-hub-btn').addEventListener('click', () => { if (buildsState.champion) window.DD.openChampion(buildsState.champion, buildsState.role); });
             function buildsSelectChampion(id, role) {
@@ -6601,14 +6957,11 @@
             };
             buildsChampInput.addEventListener('input', e => {
                 if (!buildsCtx) return;
-                // the one champion (with builds) the text can mean: "qi" completes to Qiyana; not while deleting
-                // typed letters complete only a champion nothing else fits; the dropdown (or pasting) takes an exact name too
-                const typing = /^insert/.test(e.inputType || '') && e.inputType !== 'insertReplacementText' && e.inputType !== 'insertFromPaste';
-                const one = /^delete/.test(e.inputType || '') ? null : window.DD.uniqueChampion(buildsChampInput.value, Object.keys(buildsCtx.index).map(id => ({ id, name: bvChampName(id) })), { typing });
-                const hit = one && one.id;
-                if (one && buildsChampInput.value !== one.name) buildsChampInput.value = one.name;
+                // the one champion (with builds) the text can mean: "qi" completes to "Qi|yana|" inline (the selected tail is replaced
+                // by the next letter, so no "Qiyanayana"); not while deleting. The dropdown (or pasting) takes an exact name too.
+                const one = window.DD.completeChampion(buildsChampInput, Object.keys(buildsCtx.index).map(id => ({ id, name: bvChampName(id) })), e);
                 // a new champion opens on its own main role (saved games, else how it's usually played); the role buttons switch it
-                if (hit && hit !== buildsState.champion) buildsSelectChampion(hit, null);
+                if (one && one.id !== buildsState.champion) buildsSelectChampion(one.id, null);
             });
             buildsChampInput.addEventListener('change', () => {
                 // Enter / leaving the box: an exact name ("Vi") counts now
@@ -6654,8 +7007,14 @@
             const BV_FETCH_REQUESTS = 27;   // per champion-role and patch: ~9 for the overview (one parallel burst) + ~18 for the detail
             const BV_AUTO_FETCH_MAX = 3;    // more patches than this (long ranges) need a click first
             const BV_PARALLEL_PATCHES = 3;  // patches fetched at the same time
-            let buildsFetch = null;         // { key, patches, done, error, retryAt } while fetching / after a failure
+            let buildsFetch = null;         // { key, patches, done, error, promise } while fetching / after a failure
             let buildsRateBlockedUntil = 0; // Coachless asked us to wait (Retry-After); nothing is requested before this time
+            let bvRateTimer = null;
+            function bvRepaintAfterBlock() {   // one repaint when that wait is over, so the rate-limit notes and their buttons update by themselves
+                clearTimeout(bvRateTimer);
+                const wait = buildsRateBlockedUntil - Date.now();
+                if (wait > 0) bvRateTimer = setTimeout(() => { bvRateTimer = null; if (buildsShown()) buildsPaint(); }, wait + 500);
+            }
             function bvFetchMissing(ctx, st) { return ctx.want.filter(p => !buildsHasChampion(p, st.champion, st.role)); }
             function bvFetchStatus(ctx, st) {
                 if (!canBuilds || !window.electronAPI.coachlessChampion) return ctx.dataset ? '' : '<div class="builds-note">No builds data for this champion.</div>';
@@ -6667,7 +7026,9 @@
                         ` <span class="builds-muted">Instant for pages Coachless has served recently; others it computes on request (~20-30 s each).</span></div>`;
                 }
                 if (Date.now() < buildsRateBlockedUntil && missing.length) {
-                    return `<div class="builds-note"><span class="builds-warn">Coachless rate limit reached: try again after ${new Date(buildsRateBlockedUntil).toLocaleTimeString()}.</span> Saved data is still shown.</div>`;
+                    bvRepaintAfterBlock();   // when the wait is over: the download resumes (up to 3 patches) or Try again is enabled
+                    return `<div class="builds-note"><span class="builds-warn">Coachless rate limit reached: try again after ${new Date(buildsRateBlockedUntil).toLocaleTimeString()}.</span> Saved data is still shown.` +
+                        ` <button id="builds-fetch-btn" data-bfetch="${bvEsc(key)}" disabled>Try again</button></div>`;
                 }
                 if (buildsFetch && buildsFetch.key === key && buildsFetch.error) {
                     return `<div class="builds-note"><span class="builds-warn">${bvEsc(buildsFetch.error)}</span> <button id="builds-fetch-btn" data-bfetch="${bvEsc(key)}">Try again</button></div>`;
@@ -6683,36 +7044,46 @@
                 if (!ds && !missing.length) return `<div class="builds-note">No Emerald+ games for ${name} in ${ctx.want.length > 1 ? 'these patches' : `patch ${ctx.want[0]}`} on Coachless.</div>`;
                 return '';
             }
-            async function fetchBuildsOnDemand(champion, role, patches) {
+            // "Champion|ROLE|patch" -> when it was last saved. A paint racing that save (the patch's cached dataset is reloaded just
+            // after it) still sees the patch as missing and schedules a download: such a repeat within BV_REFETCH_GUARD_MS is skipped.
+            const bvSavedAt = new Map(), BV_REFETCH_GUARD_MS = 30000;
+            async function fetchBuildsOnDemand(champion, role, patches, force = false) {
                 if (buildsFetch && !buildsFetch.error) return;
                 if (Date.now() < buildsRateBlockedUntil) { if (buildsShown()) buildsPaint(); return; }
+                const key = `${champion}|${role}`;
+                if (!force) patches = patches.filter(p => !(Date.now() - (bvSavedAt.get(`${key}|${p}`) || 0) < BV_REFETCH_GUARD_MS));
+                if (!patches.length) { if (buildsShown()) renderBuilds(); return; }   // just saved: show it
                 let championKey = null;
                 for (const [k, name] of Object.entries(champIdToName)) if (name === champion) championKey = k;
-                const key = `${champion}|${role}`;
-                buildsFetch = { key, patches, done: 0, error: null };
+                // (job: this download's own state, so a buildsFetch replaced meanwhile is never written to; promise: DD.sendAll waits on it)
+                const job = buildsFetch = { key, patches, done: 0, error: null, promise: null };
                 if (buildsShown()) buildsPaint();
                 // Up to BV_PARALLEL_PATCHES patches at once: Coachless computes a champion-patch it hasn't served recently on the spot
                 // (~20-30 s), so one at a time adds those waits up.
                 const queue = patches.slice();
                 const worker = async () => {
-                    while (queue.length && !buildsFetch.error) {
+                    while (queue.length && !job.error) {
                         const patch = queue.shift();
                         let res;
                         try { res = await window.electronAPI.coachlessChampion({ patch, champion, championKey, role }); }
                         catch (e) { res = { ok: false, error: e.message }; }
                         if (!res || !res.ok) {
                             if (res && res.code === 'RATE_LIMITED' && res.retryAt) buildsRateBlockedUntil = res.retryAt;
-                            buildsFetch.error = `Could not download ${bvChampName(champion)} for patch ${patch}: ${(res && res.error) || 'unknown error'}`;
+                            job.error = `Could not download ${bvChampName(champion)} for patch ${patch}: ${(res && res.error) || 'unknown error'}`;
                             return;
                         }
-                        await storeBuildsChampion(patch, champion, role, res.record); // fires builds-updated -> shows as it arrives
-                        buildsFetch.done++;
+                        // a save that fails (IndexedDB) ends with an error and Try again, never a "Downloading..." stuck for the session
+                        try { await storeBuildsChampion(patch, champion, role, res.record); } // fires builds-updated -> shows as it arrives
+                        catch (e) { job.error = `Could not save ${bvChampName(champion)} for patch ${patch}: ${(e && e.message) || e}`; return; }
+                        bvSavedAt.set(`${key}|${patch}`, Date.now());
+                        job.done++;
                         if (buildsShown()) buildsPaint();
                     }
                 };
-                await Promise.all(Array.from({ length: Math.min(BV_PARALLEL_PATCHES, patches.length) }, worker));
-                if (!buildsFetch.error && window.DD.notify) window.DD.notify.coachless({ champion, role, visible: buildsShown() && window.DD.buildsContext().champion === champion }); // notifications.js
-                if (!buildsFetch.error) buildsFetch = null;
+                try { await (job.promise = Promise.all(Array.from({ length: Math.min(BV_PARALLEL_PATCHES, patches.length) }, worker))); }
+                catch (e) { job.error = job.error || `Could not download ${bvChampName(champion)}: ${(e && e.message) || e}`; }
+                if (!job.error && window.DD.notify) window.DD.notify.coachless({ champion, role, visible: buildsShown() && window.DD.buildsContext().champion === champion }); // notifications.js
+                if (buildsFetch === job && !job.error) buildsFetch = null;
                 if (buildsShown()) await renderBuilds();
             }
             buildsView.addEventListener('click', e => {
@@ -6727,6 +7098,12 @@
                 buildsFetch = null;
                 fetchBuildsOnDemand(c, r, bvFetchMissing(buildsCtx, { champion: c, role: r }));
             });
+            buildsView.addEventListener('click', e => {   // a failed matchup (vs) download: Try again
+                const b = e.target.closest('[data-bvretry]');
+                if (!b) return;
+                buildsMatchup.delete(b.dataset.bvretry);
+                buildsPaint();
+            });
 
             // --- on-demand detail: components, boot slots and rune detail are not in the bulk download ---
             let buildsDetailLoading = null; // { key, done, total } while fetching
@@ -6735,8 +7112,14 @@
                 return ctx.used.filter(p => {
                     const ds = buildsDatasetCache.get(p);
                     const r = ds && ds.champions && ds.champions[`${st.champion}|${st.role}`];
-                    return r && !buildsRecordHasDetail(r);
+                    return r && (!buildsRecordHasDetail(r) || bvDetailStale(ds, r, `${st.champion}|${st.role}`));
                 });
+            }
+            // Detail tables saved more than BUILDS_MAX_AGE_MS before the overview was last fetched: the overview was refreshed since
+            // (current patch, every 24 h) but the detail never is, so it counts as missing and is fetched again when a detail table opens.
+            function bvDetailStale(ds, r, id) {
+                const ov = Date.parse((ds.fetchedAt && ds.fetchedAt[id]) || ''), det = Date.parse(r.detailAt || '');
+                return Number.isFinite(ov) && Number.isFinite(det) && ov - det > BUILDS_MAX_AGE_MS;
             }
             function bvDetailPrompt(ctx, st) {
                 if (!canBuilds || !(window.electronAPI && window.electronAPI.coachlessDetail)) return '';
@@ -6763,7 +7146,7 @@
                 if (!missing.length) return;
                 let championKey = null;
                 for (const [key, name] of Object.entries(champIdToName)) if (name === champion) championKey = key;
-                buildsDetailLoading = { key: `${champion}|${role}`, done: 0, total: missing.length };
+                const job = buildsDetailLoading = { key: `${champion}|${role}`, done: 0, total: missing.length };
                 buildsPaint();
                 let error = null;
                 const queue = missing.slice();
@@ -6771,16 +7154,21 @@
                     const ds = buildsDatasetCache.get(patch);
                     const rec = ds && ds.champions && ds.champions[`${champion}|${role}`];
                     const keystones = rec && rec.runes ? rec.runes.keystones : null; // saves a round trip
-                    const res = await window.electronAPI.coachlessDetail({ patch, champion, championKey, role, keystones });
+                    let res;
+                    try { res = await window.electronAPI.coachlessDetail({ patch, champion, championKey, role, keystones }); }
+                    catch (e) { res = { ok: false, error: e.message }; }
                     if (!res || !res.ok) {
                         if (res && res.code === 'RATE_LIMITED' && res.retryAt) buildsRateBlockedUntil = res.retryAt;
                         error = `Could not load details for patch ${patch}: ${(res && res.error) || 'unknown error'}`;
                         return;
                     }
-                    await storeBuildsDetail(patch, champion, role, res.detail); // fires builds-updated -> re-render
-                    buildsDetailLoading.done++;
+                    // a failed save (IndexedDB) becomes an error with its button, never "Loading components..." for the rest of the session
+                    try { await storeBuildsDetail(patch, champion, role, res.detail); } // fires builds-updated -> re-render
+                    catch (e) { error = `Could not save details for patch ${patch}: ${(e && e.message) || e}`; return; }
+                    job.done++;
                 } };
-                await Promise.all(Array.from({ length: Math.min(BV_PARALLEL_PATCHES, missing.length) }, worker));
+                try { await Promise.all(Array.from({ length: Math.min(BV_PARALLEL_PATCHES, missing.length) }, worker)); }
+                catch (e) { error = error || `Could not load details: ${(e && e.message) || e}`; }
                 buildsDetailLoading = error ? { key: `${champion}|${role}`, done: 0, total: missing.length, error } : null;
                 if (buildsShown()) renderBuilds();
             }
@@ -6972,15 +7360,17 @@
             document.getElementById('shrunk-header').addEventListener('mouseleave', () => { ppTooltip.style.opacity = '0'; });
 
             // (refTooltipLine is defined with the reference-prior loading block above)
+            // a recommendation row's champion as the user knows it ("Wukong"); data-champion-name stays the Data Dragon id
+            const rowName = li => bvEsc(champDisplayName(li.dataset.championName));
             function showRowShrunkTooltip(li) {
                 const info = JSON.parse(li.dataset.pp);
                 const fmt = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(2);
                 if (!info.count) {
-                    ppTooltip.innerHTML = `<h4>${li.dataset.championName}</h4><p>No matchups meet the Min Games threshold yet, so the shrunk Δ is 0.</p>`;
+                    ppTooltip.innerHTML = `<h4>${rowName(li)}</h4><p>No matchups meet the Min Games threshold yet, so the shrunk Δ is 0.</p>`;
                 } else {
                     const lo = info.mean - 1.96 * info.sd, hi = info.mean + 1.96 * info.sd;
                     ppTooltip.innerHTML = `
-                        <h4>${li.dataset.championName}: ${fmt(info.mean)}%</h4>
+                        <h4>${rowName(li)}: ${fmt(info.mean)}%</h4>
                         <p><b>${fmt(info.mean)}% [${fmt(lo)}, ${fmt(hi)}] 95% CI</b></p>
                         <p>Raw Total Δ: ${fmt(info.total)}% from ${info.count} matchup${info.count === 1 ? '' : 's'}</p>
                         ${refTooltipLine(info)}
@@ -7010,7 +7400,7 @@
                 const b = JSON.parse(li.dataset.blind || 'null');
                 if (!b) return;
                 const pts = x => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}`;
-                ppTooltip.innerHTML = `<h4>${li.dataset.championName}: blind-pick risk</h4>
+                ppTooltip.innerHTML = `<h4>${rowName(li)}: blind-pick risk</h4>
                     <p>Your lane opponent isn't picked yet. Over the ${b.n} champions usually played there (weighted by how often), this pick's lane effect averages <b>${pts(b.ev)}</b> pts; the expected downside is ${(b.risk * 100).toFixed(1)} pts.</p>
                     <p>Hardest likely counters:<br>${b.counters.map(c => `${champDisplayName(c.champion)} <b class="delta-neg">${pts(c.d)}</b> (${Math.round(c.share * 100)}% of picks, ${c.games.toLocaleString()} games)`).join('<br>') || 'none'}</p>
                     <p class="pp-muted">⚠ shows when a counter picked in 3%+ of this lane's games costs 3+ pts. Adjusted for sample size like Shrunk Δ.</p>`;
@@ -7031,7 +7421,7 @@
                     const t = JSON.parse(li.dataset.trend);
                     body += `<p>Patch ${t.prevPatch}: ${pct(t.prev)} → now ${pct(info.shrunk)} (<b class="${t.d >= 0 ? 'delta-pos' : 'delta-neg'}">${t.d >= 0 ? '+' : ''}${(t.d * 100).toFixed(2)}</b> pts${t.se > 0 ? `, ${(Math.abs(t.d) / t.se).toFixed(1)}× its noise` : ''}). ${t.flag ? 'A real change: ▲/▼ is shown.' : 'Within noise.'}</p>`;
                 }
-                ppTooltip.innerHTML = `<h4>${li.dataset.championName}: base WR</h4>${body}<p class="pp-muted">Hover the Base WR header for how this is calculated.</p>`;
+                ppTooltip.innerHTML = `<h4>${rowName(li)}: base WR</h4>${body}<p class="pp-muted">Hover the Base WR header for how this is calculated.</p>`;
                 ppTooltip.style.opacity = '1';
             }
 
@@ -7039,11 +7429,11 @@
                 const info = JSON.parse(li.dataset.pp);
                 const fmt = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
                 if (info.pp === null) {
-                    ppTooltip.innerHTML = `<h4>${li.dataset.championName}</h4><p>No matchups meet the Min Games threshold yet, so there's no evidence either way.</p>`;
+                    ppTooltip.innerHTML = `<h4>${rowName(li)}</h4><p>No matchups meet the Min Games threshold yet, so there's no evidence either way.</p>`;
                 } else {
                     ppTooltip.innerHTML = `
-                        <h4>${li.dataset.championName}: ${(info.pp * 100).toFixed(1)}%</h4>
-                        <p>Chance that picking ${li.dataset.championName} into this draft truly improves your win rate.</p>
+                        <h4>${rowName(li)}: ${(info.pp * 100).toFixed(1)}%</h4>
+                        <p>Chance that picking ${rowName(li)} into this draft truly improves your win rate.</p>
                         <p>Shrunk estimate: <b>${fmt(info.mean)}</b> ± ${(info.sd * 100).toFixed(2)}% (1 SD)<br>
                         Raw Total Δ: ${fmt(info.total)} from ${info.count} matchup${info.count === 1 ? '' : 's'}</p>
                         ${refTooltipLine(info)}
@@ -7071,18 +7461,18 @@
                 const p50Class = info.p50 >= 0.9 ? 'pp-high' : info.p50 >= 0.5 ? 'pp-mid' : 'pp-low';
                 const baseSdStr = info.baseSd != null ? ` ± ${(info.baseSd * 100).toFixed(2)}%` : '';
                 ppTooltip.innerHTML = `
-                    <h4>${li.dataset.championName}: ${pct(info.wr)} ± ${pct(info.sd)}</h4>
+                    <h4>${rowName(li)}: ${pct(info.wr)} ± ${pct(info.sd)}</h4>
                     <p>95% range: <b>${pct(info.wr - 1.96 * info.sd)} to ${pct(info.wr + 1.96 * info.sd)}</b> (the bar under the value)</p>
                     <p>Meta strength (shrunk base WR): <b>${pct(info.base, 2)}</b>${baseSdStr}<br>
                     Draft effect (Shrunk Δ): <b>${fmt(info.delta)}</b> ± ${(info.deltaSd * 100).toFixed(2)}%${info.count ? '' : ' (no matchups meet Min Games)'}</p>
                     <p>P(Exp WR &gt; 50%): <b class="${p50Class}">${pct(info.p50)}</b></p>
-                    <p class="pp-muted">For an average player at this rank; the "You" column is not included. Hover the Exp WR header for how this is calculated.</p>`;
+                    <p class="pp-muted">For an average player at this rank; the "For you" column is not included. Hover the Exp WR header for how this is calculated.</p>`;
                 ppTooltip.style.opacity = '1';
             }
 
             function showRowPBestTooltip(li) {
                 const info = JSON.parse(li.dataset.pbest);
-                const name = li.dataset.championName;
+                const name = rowName(li);
                 if (info.p == null) {
                     ppTooltip.innerHTML = `<h4>${name}: P(best)</h4><p>Not in the race: this champion is picked, banned, or filtered out by the Role Freq / Min Base WR filters.</p>`;
                 } else {
@@ -7221,9 +7611,10 @@
                     const deltaClass = delta >= 0 ? 'delta-pos' : 'delta-neg';
                     const gamesHTML = `<span class="games-count">(${formatGames(stats.games)})</span>`;
                     const deltaSuffix = '';
-                    return `<div><span class="champ-name" title="${champ}">${champ}</span> ${gamesHTML}<span class="${deltaClass}">${delta.toFixed(2)}${deltaSuffix}</span></div>`;
+                    const nm = bvEsc(champDisplayName(champ));
+                    return `<div><span class="champ-name" title="${nm}">${nm}</span> ${gamesHTML}<span class="${deltaClass}">${delta.toFixed(2)}${deltaSuffix}</span></div>`;
                 } else {
-                    return `<div><span class="delta-neutral">${role} MISSING</span></div>`;
+                    return `<div><span class="delta-neutral">${BV_ROLE_LABELS[role] || role}: missing</span></div>`;
                 }
             }
             
@@ -7542,10 +7933,23 @@
                 if (!api || !champion || !role) return { ok: false, error: 'Nothing to send.' };
                 const out = { ok: true, parts: {} };
                 let ctx = await buildsResolveData();
-                const missing = ctx.want.filter(p => !buildsHasChampion(p, champion, role));
-                if (missing.length && canBuilds && window.electronAPI.coachlessChampion) { await fetchBuildsOnDemand(champion, role, missing); ctx = await buildsResolveData(); }
+                // Missing patches are downloaded like the Builds view would: at most BV_AUTO_FETCH_MAX, newest first (a long Time Period
+                // pools what is saved), after any download already running has finished (it would make this one return at once).
+                const missing = ctx.want.filter(p => !buildsHasChampion(p, champion, role)).slice(0, BV_AUTO_FETCH_MAX);
+                let fetchError = null;
+                if (missing.length && canBuilds && window.electronAPI.coachlessChampion) {
+                    for (let i = 0; i < 3 && buildsFetch && !buildsFetch.error && buildsFetch.promise; i++) await buildsFetch.promise.catch(() => {});
+                    const before = buildsFetch;
+                    await fetchBuildsOnDemand(champion, role, missing);
+                    if (buildsFetch && buildsFetch !== before && buildsFetch.error) fetchError = buildsFetch.error;
+                    ctx = await buildsResolveData();
+                }
                 let rec = ctx.dataset && ctx.dataset.champions[`${champion}|${role}`];
-                if (!rec) return { ok: false, error: buildsFetch && buildsFetch.error ? buildsFetch.error : `No Coachless data for ${bvChampName(champion)} ${BV_ROLE_LABELS[role] || role}.` };
+                if (!rec) {
+                    const why = fetchError || (Date.now() < buildsRateBlockedUntil ? `Coachless rate limit reached: try again after ${new Date(buildsRateBlockedUntil).toLocaleTimeString()}.` : null);
+                    return { ok: false, error: why || `No Coachless data for ${bvChampName(champion)} ${BV_ROLE_LABELS[role] || role}.` };
+                }
+                buildsApplyMsg = null;   // this Send writes DravenGap's rune page, spells and item set: an older Builds message is stale now
                 if (!buildsRecordHasDetail(rec) && window.electronAPI.coachlessDetail) {
                     if (!buildsCtx) buildsCtx = ctx;
                     await loadBuildsDetailFor(champion, role);
@@ -7620,6 +8024,31 @@
                 const exact = list.find(c => norm(c.name) === q || norm(c.id) === q); if (exact && !typing) return exact;
                 const hits = list.filter(c => norm(c.name).startsWith(q) || norm(c.id).startsWith(q) || String(c.name).toLowerCase().split(/[^a-z0-9]+/).some(w => w && w.startsWith(q)));
                 return hits.length === 1 ? hits[0] : null;
+            };
+            // Inline completion for a champion box. Returns the one champion the text can mean (uniqueChampion, in typing mode for
+            // typed letters) and, while letters are typed at the end of the box and the name starts with the text, fills in the rest
+            // of the name as a selection, so the next letter replaces it: "ah" -> "Ah|ri|", then "r" -> "Ahr|i|". The box is never
+            // cleared or re-ordered, so typing a whole name can't hop to another champion ("ahri" used to end on Riven once the box
+            // was emptied after "ah"). Word matches ("fate" = Twisted Fate) are returned but not written into the box.
+            window.DD.completeChampion = (input, list, ev) => {
+                const t = (ev && ev.inputType) || '';
+                if (/^delete/.test(t)) return null;
+                const typing = /^insert/.test(t) && t !== 'insertReplacementText' && t !== 'insertFromPaste';
+                const c = window.DD.uniqueChampion(input.value, list, { typing });
+                if (!c) return null;
+                const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const raw = String(input.value), q = norm(raw), name = String(c.name), nn = norm(name);
+                const atEnd = input.selectionStart == null || input.selectionStart === raw.length;
+                if (t === 'insertText' && !(ev && ev.isComposing) && atEnd && nn !== q && nn.startsWith(q)) {
+                    // the caret goes after the typed letters, counted in the real name (its spaces and punctuation skipped) ...
+                    let i = 0, seen = 0;
+                    while (i < name.length && seen < q.length) { if (/[a-z0-9]/i.test(name[i])) seen++; i++; }
+                    // ... and past the name's own space or apostrophe when the typed text ends with one ("twisted " -> "Twisted |Fate|")
+                    if (/[^a-z0-9]$/i.test(raw)) while (i < name.length && !/[a-z0-9]/i.test(name[i])) i++;
+                    input.value = name;
+                    try { input.setSelectionRange(i, name.length); } catch (e) { /* not a text box */ }
+                }
+                return c;
             };
             // the matchup page: champion page of `champ` in `role`, on its "vs" tab against `vs`
             window.DD.openMatchup = (champ, role, vs) => { if (window.DDHub) window.DDHub.open(champ, role, { vs }); };
@@ -7706,6 +8135,11 @@
                 regionSel.value = (acc && acc.platform) || 'EUW1';
                 if (!regionSel.value) regionSel.value = 'EUW1';
                 setAccountMsg('');
+                // no saved region: your account's region (DD.defaultPlatform in app-shell.js: the client's, else EUW1), unless changed meanwhile
+                if (!(acc && acc.platform) && window.DD && window.DD.defaultPlatform) {
+                    const p = await window.DD.defaultPlatform().catch(() => null);
+                    if (p && regionSel.value === 'EUW1') { regionSel.value = p; if (!regionSel.value) regionSel.value = 'EUW1'; }
+                }
             }
             // Data > "Matchup builds saved: N (X KB)" + Clear (DD.matchupsSaved, Builds block in the main script)
             async function showMatchups(msg) {

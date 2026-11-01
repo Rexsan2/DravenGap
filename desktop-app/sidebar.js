@@ -12,7 +12,7 @@
     const MODE_VIEW = { 'sr': 'draft', 'aram-mayhem': 'aram', 'arena': 'arena' };
     const items = [...nav.querySelectorAll('.sb-item[data-view]')];
     const ACTIVE = new Set(['GameStart', 'InProgress', 'Reconnect']);
-    let inGame = false;
+    let inGame = false, phase = null;   // phase: the client's, from profile:phase / profile:me (the start-up restore below reads it)
 
     const profileTab = () => (window.DDProfile && window.DDProfile.state && window.DDProfile.state.tab) || null;
     function current() {
@@ -69,8 +69,8 @@
     nav.ownerDocument.getElementById('profile-root').addEventListener('click', () => setTimeout(sync, 0)); // Profile's own tabs
     if (api) {
         api.on('profile:live', ev => { if (ev && typeof ev.active === 'boolean') { inGame = ev.active; sync(); } });
-        api.on('profile:phase', ev => { if (ev && ev.next) { inGame = ACTIVE.has(ev.next); sync(); } });
-        api.invoke('profile:me').then(r => { if (r && r.ok && r.phase) { inGame = ACTIVE.has(r.phase); sync(); } }).catch(() => {});
+        api.on('profile:phase', ev => { if (ev && ev.next) { phase = ev.next; inGame = ACTIVE.has(ev.next); sync(); } });
+        api.invoke('profile:me').then(r => { if (r && r.ok && r.phase) { if (!phase) phase = r.phase; inGame = ACTIVE.has(r.phase); sync(); } }).catch(() => {});
     }
 
     // saved layout + game mode
@@ -79,7 +79,9 @@
         try { s = await window.electronAPI.getSettings(); } catch (e) { /* defaults */ }
         setCollapsed(s && typeof s.sidebarCollapsed === 'boolean' ? s.sidebarCollapsed : window.innerWidth < 1600, false); // icons only on smaller windows until chosen
         await DD.ready;
-        if (s && MODE_VIEW[s.gameMode] && ['draft', 'aram', 'arena'].includes(DD.currentView())) DD.showView(MODE_VIEW[s.gameMode]);
+        // not while Follow my game owns the view: started during champion select or a game, it has already picked the right one
+        const followed = DD.followGame && DD.followGame.isOn() && (phase === 'ChampSelect' || ACTIVE.has(phase));
+        if (!followed && s && MODE_VIEW[s.gameMode] && ['draft', 'aram', 'arena'].includes(DD.currentView())) DD.showView(MODE_VIEW[s.gameMode]);
         sync();
     })();
     sync();

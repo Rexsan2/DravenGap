@@ -23,26 +23,37 @@
     const champ = id => (DD.getChampions() || []).find(c => c.id === id) || null;
     const img = id => { const c = champ(id), v = DD.getLatestPatch && DD.getLatestPatch(); return c && v ? `${DD.ddragonBase}/cdn/${v}/img/champion/${c.image.full}` : ''; };
     const icon = id => `<img class="pp-ico" src="${esc(img(id))}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`;
-    const memo = new Map();   // "label|role" -> plan
+    const memo = new Map();   // "label|games|role|pool|min games|borrow" -> plan
 
     // The pure part (tests call it with made-up numbers): vecs = { champ: [e per opponent] }, w = [weights], pool = [champ ids]
+    // stop: why it stopped choosing: 'cap' (MAX_POOL reached with champions left), 'gain' (the next one adds under 0.05 pts),
+    // 'all' (every champion of the pool is chosen)
     function choose(vecs, w, pool, max = MAX_POOL) {
         const value = P => w.reduce((t, wi, i) => t + wi * Math.max(...P.map(c => vecs[c][i])), 0);
         const chosen = [], steps = [];
         const left = pool.filter(c => vecs[c]);
+        let stop = 'all';
         while (chosen.length < max && left.length) {
             let best = null, bv = -Infinity;
             for (const c of left) { const v = value([...chosen, c]); if (v > bv + 1e-12) { bv = v; best = c; } }
-            if (chosen.length && bv - steps[steps.length - 1].value < 0.0005) break;   // adds under 0.05 pts: not worth a third champion
+            if (chosen.length && bv - steps[steps.length - 1].value < 0.0005) { stop = 'gain'; break; }   // adds under 0.05 pts: not worth a third champion
             chosen.push(best); left.splice(left.indexOf(best), 1); steps.push({ champ: best, value: bv });
         }
-        return { chosen, steps, value: chosen.length ? value(chosen) : null, valueOf: value };
+        if (stop === 'all' && left.length) stop = 'cap';
+        return { chosen, steps, stop, value: chosen.length ? value(chosen) : null, valueOf: value };
     }
 
+    // what else a plan depends on besides the dataset: your pool (it arrives after the start and changes with new games), Min Games
+    // and Borrow strength (both change the matchup numbers)
+    const settingsKey = mine => {
+        const mg = document.getElementById('min-games-filter'), bs = document.getElementById('borrow-strength-toggle');
+        return [Array.isArray(mine) ? mine.slice().sort().join(',') : 'unknown', mg ? mg.value : '', bs ? bs.checked : ''].join('|');
+    };
     async function plan(role) {
         const tier = DD.tierData ? await DD.tierData() : null;
         if (!tier || tier.error) return { error: (tier && tier.error) || 'No draft data loaded.' };
-        const key = `${tier.label}|${tier.games}|${role}`;
+        const mine = DD.myPool ? DD.myPool() : null;
+        const key = `${tier.label}|${tier.games}|${role}|${settingsKey(mine)}`;
         if (memo.has(key)) return memo.get(key);
         const cands = tier.rows.filter(r => r.role === role && r.freq >= MIN_FREQ && r.pick >= MIN_PICK);
         const opps = cands.slice().sort((a, b) => b.pick - a.pick);
@@ -56,7 +67,6 @@
             base[c.champion] = b;
             vecs[c.champion] = opps.map(o => (o.champion === c.champion ? b : by.has(o.champion) ? by.get(o.champion) : b));
         }
-        const mine = DD.myPool ? DD.myPool() : null;
         const poolKnown = Array.isArray(mine);
         const pool = poolKnown ? mine.filter(c => vecs[c]) : [];
         const pick = choose(vecs, w, pool);
@@ -77,7 +87,7 @@
             const gain = pick.chosen.length ? pick.valueOf([...pick.chosen, c]) - pick.value : blind(c) - 0.5;
             if (!learn || gain > learn.gain) learn = { champ: c, gain };
         }
-        const out = { role, label: tier.label, poolKnown, pool, chosen: pick.chosen, steps: pick.steps, value: pick.value, blind: Object.fromEntries(pick.chosen.map(c => [c, blind(c)])),
+        const out = { role, label: tier.label, poolKnown, pool, chosen: pick.chosen, steps: pick.steps, stop: pick.stop, value: pick.value, blind: Object.fromEntries(pick.chosen.map(c => [c, blind(c)])),
             gaps: gaps.sort((a, b) => b.share - a.share).slice(0, 8), learn, opponents: opps.length };
         memo.clear(); memo.set(key, out);
         return out;
@@ -99,7 +109,8 @@
             const gain = i ? (s.value - P.steps[i - 1].value) * 100 : null;
             h += `<div class="pp-step">${icon(s.champ)}<div><b>${name(s.champ)}</b><span class="pp-m">${i === 0 ? `best blind pick: ${pct(P.blind[s.champ])} against an average opponent` : `answers what the others don't: +${gain.toFixed(1)} pts`}</span></div></div>`;
         });
-        h += `</div><div class="pp-m">With the best of them against each opponent: <b>${pct(P.value)}</b> expected win rate in lane matchups.${P.pool.length > P.chosen.length ? ` Your other ${P.pool.length - P.chosen.length} ${esc(lane)} champion${P.pool.length - P.chosen.length === 1 ? '' : 's'} add less than 0.05 pts.` : ''}</div></div>`;
+        const others = P.pool.length - P.chosen.length, otherTxt = `Your other ${others} ${esc(lane)} champion${others === 1 ? '' : 's'}`;
+        h += `</div><div class="pp-m">With the best of them against each opponent: <b>${pct(P.value)}</b> expected win rate in lane matchups.${others > 0 ? (P.stop === 'cap' ? ` ${otherTxt} ${others === 1 ? 'is' : 'are'} left out: the planner keeps ${MAX_POOL}.` : ` ${otherTxt} add${others === 1 ? 's' : ''} less than 0.05 pts.`) : ''}</div></div>`;
         if (P.gaps.length) {
             h += `<div class="pp-card"><div class="pp-h">Gaps: common opponents your pool answers below 49%</div><table class="pp-t"><thead><tr><th class="l">Opponent</th><th>Seen</th><th>Your best</th><th class="l">Best answer</th></tr></thead><tbody>`;
             h += P.gaps.map(g => `<tr><td class="l">${icon(g.opp)} ${name(g.opp)}</td><td>${pct(g.share)}</td><td class="delta-neg">${pct(g.mine)}</td><td class="l">${g.answer ? `${icon(g.answer)} ${name(g.answer)} <span class="pp-m">${pct(g.answerWr)}</span>` : '–'}</td></tr>`).join('');
@@ -109,13 +120,26 @@
         return h + '</div>';
     }
 
+    // still wanted: the tier list's body is shared by its tabs, so a plan that finishes after a switch to another tab or role is dropped
+    const wanted = (el, role) => { const T = window.DDTier && window.DDTier.state; return el.isConnected && (!T || (T.tab === 'pool' && T.role === role)); };
+    let poolTimer = null;
     async function render(el, role) {
         if (!el) return;
+        clearTimeout(poolTimer);
         if (!LANE[role]) { el.innerHTML = DD.ui ? DD.ui.empty('Pick a role', 'The pool planner works one role at a time: choose Top, Jungle, Mid, Bot or Support above.') : 'Pick a role.'; return; }
         el.innerHTML = DD.ui ? DD.ui.loading('Working out your pool…') : 'Working…';
         let P;
         try { P = await plan(role); } catch (e) { P = { error: e.message }; }
-        if (el.isConnected) el.innerHTML = html(P);
+        if (!wanted(el, role)) return P;
+        el.innerHTML = html(P);
+        // your pool comes from your stats, which can arrive after the start: look again until it is known while this stays on screen
+        if (P && !P.error && !P.poolKnown) {
+            const check = () => {
+                if (!wanted(el, role) || (DD.currentView && DD.currentView() !== 'tierlist')) return;
+                if (Array.isArray(DD.myPool && DD.myPool())) render(el, role); else poolTimer = setTimeout(check, 3000);
+            };
+            poolTimer = setTimeout(check, 3000);
+        }
         return P;
     }
     window.DDPool = { plan, render, choose };

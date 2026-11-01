@@ -18,14 +18,15 @@ const SR_QUEUES = [400, 420, 430, 440, 480, 490, 700, 830, 840, 850, 1400];
 const ARENA_QUEUES = [1700, 1710, 1750];
 const EXCLUDED_FROM_ALL = [...ARENA_QUEUES, 1800, 1810, 1820, 1830, 1840, 2000, 2010, 2020]; // + Swarm and the tutorials
 // Queue tabs. `type`/`queue` are the match-v5 ids-endpoint filters; `queues` filters the returned games client-side
-// (`exclude` instead of `queues` for "All": everything except those queues).
+// (`exclude` instead of `queues` for "All": everything except those queues). `clientOnly`: Riot's API never lists these games,
+// so the tab shows only the games recorded from the client and Riot is not asked (profile-main.js matchesFor).
 const QUEUE_GROUPS = {
     all: { label: 'All', queue: null, type: null, queues: null, exclude: EXCLUDED_FROM_ALL },
     solo: { label: 'Ranked Solo', queue: 420, queues: [420] },
     flex: { label: 'Flex', queue: 440, queues: [440] },
     normal: { label: 'Normal', type: 'normal', queues: [400, 430, 480, 490] },
     aram: { label: 'ARAM', queue: 450, queues: [450] },
-    mayhem: { label: 'ARAM Mayhem', queue: MAYHEM_QUEUE, queues: [MAYHEM_QUEUE] },
+    mayhem: { label: 'ARAM Mayhem', queue: MAYHEM_QUEUE, queues: [MAYHEM_QUEUE], clientOnly: true },
     // Arena: placement instead of win / loss. Riot's id list takes one queue and Arena has several (1700, 1710, 1750 = 3x6, the current
     // one), so the ids are fetched unfiltered (like "All") and the rows keep Arena games only.
     arena: { label: 'Arena', queue: null, type: null, queues: ARENA_QUEUES }
@@ -174,7 +175,8 @@ function playedWith(matches, puuid, ident, minGames = 2) {
 function ledgerRow(cm, puuid, ident) {
     const me = findMe(cm, puuid, ident);
     if (!me) return null;
-    return { id: cm.id, q: cm.queueId, c: me.champId, w: me.win ? 1 : 0, k: me.k, d: me.d, a: me.a, cs: me.cs, dur: cm.dur, end: cm.end, pos: me.pos, vis: me.vis, kp: me.kp, rm: cm.remake ? 1 : 0, ...(me.plc ? { pl: me.plc, tp: cm.winPlaces || arenaWinPlaces(cm.players, cm.queueId) } : {}) };
+    return { id: cm.id, q: cm.queueId, c: me.champId, w: me.win ? 1 : 0, k: me.k, d: me.d, a: me.a, cs: me.cs, dur: cm.dur, end: cm.end, pos: me.pos, vis: me.vis, kp: me.kp, rm: cm.remake ? 1 : 0, ...(me.plc ? { pl: me.plc, tp: cm.winPlaces || arenaWinPlaces(cm.players, cm.queueId) } : {}),
+        ...(cm.src === 'lcu' ? { src: 'lcu' } : {}) };   // built from the client's copy: rebuilt when Riot's version is downloaded
 }
 
 // The client's own record of a finished game (/lol-match-history/v1/games/{gameId}, the older match-v4 shape) -> a match-v5-like
@@ -222,6 +224,9 @@ function lcuRankedToEntries(stats) {
     return out;
 }
 
-const LCU_REGION_TO_PLATFORM = { TW: 'TW2', VN: 'VN2', PH: 'PH2', SG: 'SG2', TH: 'TH2', EUW: 'EUW1', EUNE: 'EUN1', NA: 'NA1', BR: 'BR1', LAN: 'LA1', LAS: 'LA2', OCE: 'OC1', TR: 'TR1', RU: 'RU', JP: 'JP1', KR: 'KR', PBE: 'NA1', SG2: 'SG2', PH2: 'PH2', TH2: 'TH2', TW2: 'TW2', VN2: 'VN2', ME1: 'ME1' };
+// The client's region name (/riotclient/get_region_locale) -> platform id. Some clients answer with the platform id itself
+// (LA1, OC1, ...), so every platform id also maps to itself.
+const LCU_REGION_TO_PLATFORM = { TW: 'TW2', VN: 'VN2', PH: 'PH2', SG: 'SG2', TH: 'TH2', EUW: 'EUW1', EUNE: 'EUN1', NA: 'NA1', BR: 'BR1', LAN: 'LA1', LAS: 'LA2', OCE: 'OC1', TR: 'TR1', RU: 'RU', JP: 'JP1', KR: 'KR', PBE: 'NA1', ME: 'ME1',
+    EUW1: 'EUW1', EUN1: 'EUN1', NA1: 'NA1', BR1: 'BR1', LA1: 'LA1', LA2: 'LA2', OC1: 'OC1', TR1: 'TR1', JP1: 'JP1', SG2: 'SG2', PH2: 'PH2', TH2: 'TH2', TW2: 'TW2', VN2: 'VN2', ME1: 'ME1' };
 
 module.exports = { compactPerks, playedWith, QUEUE_NAMES, QUEUE_GROUPS, MAYHEM_QUEUE, SR_QUEUES, ARENA_QUEUES, EXCLUDED_FROM_ALL, inGroup, isExcludedFromAll, isSrQueue, arenaWinPlaces, rowWinPlaces, lcuGameToMatch, seasonStart, compactMatch, ledgerRow, findMe, forViewer, lcuRankedToEntries, LCU_REGION_TO_PLATFORM, durationSeconds };

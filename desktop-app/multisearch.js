@@ -4,6 +4,7 @@
 // and the live-game tags (profile:multi; needs a Riot API key). Two players are looked up at a time; the app's shared Riot
 // limiter keeps the whole search inside the key's budget. Click a card for the full profile.
 // Loading / empty / error states come from DD.ui (ui-states.js): a rate-limited player shows "Resumes in 1:12" and looks up again by itself.
+// A player whose rank request failed while the rest loaded (profile:multi `partial.league`) shows "rank unavailable" with a Retry button.
 (function () {
     'use strict';
     const DD = window.DD, root = document.getElementById('scout-root');
@@ -22,7 +23,7 @@
         const out = [], seen = new Set();
         for (let line of String(text || '').split(/[\r\n,;]+/)) {
             line = line.replace(/\s+(joined|left)\s+the\s+lobby.*$/i, '').replace(/\s+has\s+(joined|left).*$/i, '').trim();
-            const m = line.match(/([^#:]{3,16}?)\s*#\s*([A-Za-z0-9]{2,5})\b/);
+            const m = line.match(/([^#:]{3,16}?)\s*#\s*([\p{L}\p{N}]{2,5})(?![\p{L}\p{N}])/u);   // taglines can use any letters (Korean, ...)
             if (!m) continue;
             const id = { gameName: m[1].trim(), tagLine: m[2] };
             const k = `${id.gameName.toLowerCase()}#${id.tagLine.toLowerCase()}`;
@@ -32,11 +33,14 @@
         }
         return out;
     }
+    // the Region box starts on your account's region (DD.defaultPlatform, app-shell.js: the client's, else Settings > Default
+    // account, else EUW1). paint() fills it in as soon as it is known, so the box always shows the region a search uses.
     async function defaultPlatform() {
         if (S.platform) return S.platform;
-        try { const r = await api.invoke('profile:me'); if (r && r.ok && r.me && r.me.platform) return (S.platform = r.me.platform); } catch (e) { /* no client */ }
-        try { const s = await window.electronAPI.getSettings(); if (s && s.profileAccount && s.profileAccount.platform) return (S.platform = s.profileAccount.platform); } catch (e) { /* none */ }
-        return (S.platform = 'EUW1');
+        let p = 'EUW1';
+        try { if (DD.defaultPlatform) p = (await DD.defaultPlatform()) || 'EUW1'; } catch (e) { /* EUW1 */ }
+        if (!S.platform) S.platform = PLATFORMS.includes(p) ? p : 'EUW1';   // a region picked meanwhile wins
+        return S.platform;
     }
     async function search() {
         const ids = parse(S.text), seq = ++S.seq, platform = await defaultPlatform();
@@ -80,8 +84,9 @@
                 <div class="ms-note">${esc(S.note || `Up to ${MAX} players. Needs a Riot API key (Settings); players looked up recently come from the cache.`)} ${DD.help ? DD.help('tags') : ''}</div>
                 <div class="ms-cards" id="ms-cards"></div></div>`;
         paintCards();
+        if (!S.platform) defaultPlatform().then(p => { const sel = root.querySelector('#ms-platform'); if (sel) sel.value = p; });
     }
-    function card(p) {
+    function card(p, i) {
         const head = `<div class="ms-name">${esc(p.gameName)}<span>#${esc(p.tagLine)}</span></div>`;
         if (p.state === 'loading') return `<div class="ms-card loading">${head}${DD.ui.loading('Looking up…')}</div>`;
         if (p.state === 'error') {
@@ -90,11 +95,14 @@
         }
         const d = p.data, pr = d.profile;
         const solo = (pr.ranked || []).find(e => e.queueType === 'RANKED_SOLO_5x5'), flex = (pr.ranked || []).find(e => e.queueType === 'RANKED_FLEX_SR');
+        const gone = d.partial && d.partial.league && !(pr.ranked || []).length ? d.partial.league : null;   // not loaded, which is not "unranked"
+        const noSolo = gone ? `<span class="ms-m" title="${esc(gone.error || 'The rank request failed.')}">Solo/Duo: rank unavailable</span> <button type="button" class="dg-state-btn" data-rank-retry="${i}" title="Ask Riot for the rank again">Retry</button>`
+            : '<span class="ms-m">Solo/Duo: unranked</span>';
         const rk = e => { const g = e.wins + e.losses; return `<span class="ms-tier t-${esc(e.tier)}">${esc(e.tier.charAt(0) + e.tier.slice(1).toLowerCase())}${['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(e.tier) ? '' : ' ' + esc(e.rank)}</span> ${e.leaguePoints} LP · <b class="${e.wins / g >= 0.5 ? 'delta-pos' : 'delta-neg'}">${Math.round(e.wins / g * 100)}%</b> <span class="ms-m">${g} games</span>`; };
         const form = d.form && d.form.results ? d.form.results.slice(0, 5) : [];
         return `<div class="ms-card" data-acct="${esc(JSON.stringify({ gameName: pr.gameName, tagLine: pr.tagLine, platform: pr.platform }))}" title="Open the full profile">${head}
             <div class="ms-m">Level ${pr.summonerLevel || '?'}</div>
-            <div class="ms-rank">${solo ? `${RANK[solo.queueType]}: ${rk(solo)}` : '<span class="ms-m">Solo/Duo: unranked</span>'}</div>
+            <div class="ms-rank">${solo ? `${RANK[solo.queueType]}: ${rk(solo)}` : noSolo}</div>
             ${flex ? `<div class="ms-rank ms-m">${RANK[flex.queueType]}: ${rk(flex)}</div>` : ''}
             <div class="ms-row"><span class="ms-m">Mastery</span>${(pr.mastery || []).slice(0, 3).map(m => `<span class="ms-mast">${icon(m.championId)}<em>${Math.round(m.championPoints / 1000)}k</em></span>`).join('') || '<span class="ms-m">–</span>'}</div>
             <div class="ms-row"><span class="ms-m">Last ${form.length}</span>${form.map(g => `<span class="ms-g ${g.win ? 'w' : 'l'}" title="${g.k}/${g.d}/${g.a}">${icon(g.champId, 'ms-ico sm')}</span>`).join('') || `<span class="ms-m">${d.formError ? esc(d.formError.error || 'unavailable') : 'no recent games'}</span>`}</div>
@@ -112,6 +120,8 @@
     root.addEventListener('click', e => {
         if (e.target.closest('#ms-go')) { search(); return; }
         if (e.target.closest('#ms-lobby')) { fromLobby(); return; }
+        const rr = e.target.closest('[data-rank-retry]');   // inside a card: looks the player up again instead of opening the profile
+        if (rr) { const p = S.players[+rr.dataset.rankRetry]; if (p) retry(p); return; }
         const c = e.target.closest('.ms-card[data-acct]');
         if (c && window.DDProfile) { try { window.DDProfile.openFromOutside(JSON.parse(c.dataset.acct), 'summary'); } catch (err) { /* bad data */ } }
     });

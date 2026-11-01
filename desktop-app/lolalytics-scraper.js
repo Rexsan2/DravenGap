@@ -21,8 +21,12 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 };
 const CONCURRENCY = 4;
-const REQUEST_DELAY_MS = 150;
 const MIN_GAMES_FOR_TEAM_DATA = 100;
+// Pause before every request, and the back-off after a failed attempt (x1, x2, x3). An object so tests can shorten them.
+const timing = { requestDelayMs: 150, backoffMs: 2000 };
+// fetchText's answer when a page could not be read after its retries (network errors, timeouts, 403, 429, 5xx), as opposed
+// to null for a page LoLalytics answered with another 4xx (a champion / role combo without games): only this counts as failed.
+const FAILED = Symbol('request failed');
 
 function getText(url, signal) {
     return new Promise((resolve, reject) => {
@@ -45,21 +49,22 @@ function getText(url, signal) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Retries transient failures (timeouts, 429, 5xx) with backoff; returns null on a final failure.
+// Retries transient failures (timeouts, network errors, 403 / 429, 5xx) with backoff and returns FAILED when they persist;
+// null for any other 4xx (LoLalytics has no page for that combo).
 async function fetchText(url, signal) {
     for (let attempt = 0; attempt < 3; attempt++) {
         if (signal && signal.aborted) throw new Error('cancelled');
         try {
-            await sleep(REQUEST_DELAY_MS);
+            await sleep(timing.requestDelayMs);
             const r = await getText(url, signal);
             if (r.status === 200) return r.text;
-            if (r.status !== 429 && r.status < 500) return null;
+            if (r.status !== 403 && r.status !== 429 && r.status < 500) return null;
         } catch (e) {
             if (e.message === 'cancelled') throw e;
         }
-        await sleep(2000 * (attempt + 1));
+        await sleep(timing.backoffMs * (attempt + 1));
     }
-    return null;
+    return FAILED;
 }
 
 // LoLalytics embeds the page data as Qwik's serialised object graph: objects reference each
@@ -111,21 +116,25 @@ async function fetchChampionRole(champion, role, period, rank, signal) {
     const name = urlName(champion);
     const buildQs = new URLSearchParams({ tier: rank, patch: period, lane: role, region: 'all' });
     const html = await fetchText(`${BUILD_PAGE_URL.replace('{champion}', name)}?${buildQs}`, signal);
+    if (html === FAILED) return { champion, role: role.toUpperCase(), failed: true };
     const enemyData = html ? parseQwikJson(html) : null;
     if (!enemyData) return null;
 
-    let teamData = null;
+    let teamData = null, teamFailed = false;
     const header = enemyData.header || {};
     if ((header.n || 0) >= MIN_GAMES_FOR_TEAM_DATA) {
         const teamQs = new URLSearchParams({ ep: 'build-team', v: '1', patch: period, c: name, lane: role, tier: rank, queue: 'ranked', region: 'all' });
         const text = await fetchText(`${TEAM_API_URL}?${teamQs}`, signal);
-        try { teamData = text ? JSON.parse(text) : null; } catch (e) { teamData = null; }
+        teamFailed = text === FAILED;
+        try { teamData = text && !teamFailed ? JSON.parse(text) : null; } catch (e) { teamData = null; }
     }
-    // Keep only what buildDataset uses; the full page data (builds, runes, graphs...) is ~3x larger
+    // Keep only what buildDataset uses; the full page data (builds, runes, graphs...) is ~3x larger.
+    // failed: its synergies could not be read (the matchups are kept)
     return {
         champion, role: role.toUpperCase(),
         enemyData: { header: { n: header.n, wr: header.wr, pr: header.pr }, enemy: enemyData.enemy },
-        teamData: teamData && teamData.team ? { team: teamData.team } : null
+        teamData: teamData && teamData.team ? { team: teamData.team } : null,
+        failed: teamFailed
     };
 }
 
@@ -178,6 +187,8 @@ function buildDataset(results, idToName) {
 
 // Scrapes one dataset. period: a patch label ('16.15') or a day window ('7', '14').
 // onProgress({ done, total }) is called as requests complete. Throws 'cancelled' if the signal aborts.
+// failed = champion / role combos whose pages kept failing (missing or without synergies): the window keeps a partial dataset
+// as partial and never lets it replace a complete one. Combos LoLalytics has no page for are not failures (many off-roles).
 async function scrapeDataset({ period, rank, signal, onProgress = () => {}, championList, concurrency = CONCURRENCY }) {
     const { names, idToName } = championList || await getChampionList();
     const combos = [];
@@ -194,14 +205,15 @@ async function scrapeDataset({ period, rank, signal, onProgress = () => {}, cham
     };
     await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, CONCURRENCY)) }, worker));
 
+    const failed = results.filter(r => r && r.failed).length;
     const dataset = buildDataset(results, idToName);
-    if (dataset.statsList.length === 0) throw new Error(`LoLalytics returned no data for ${period} / ${rank}`);
+    if (dataset.statsList.length === 0) throw new Error(`LoLalytics returned no data for ${period} / ${rank}${failed ? ` (${failed} pages failed)` : ''}`);
     // Compressed here so only ~10-15 MB crosses IPC instead of a ~150 MB object
     const [statsGz, matchupsGz] = await Promise.all([
         gzip(Buffer.from(JSON.stringify(dataset.statsList))),
         gzip(Buffer.from(JSON.stringify(dataset.matchups)))
     ]);
-    return { statsGz, matchupsGz, totalGames: dataset.totalGames, combos: dataset.statsList.length, matchupCount: Object.keys(dataset.matchups).length };
+    return { statsGz, matchupsGz, totalGames: dataset.totalGames, combos: dataset.statsList.length, matchupCount: Object.keys(dataset.matchups).length, failed, requested: combos.length };
 }
 
 // The newest patch LoLalytics has data for: every page shows it ("Patch 16.20" in the header, and in its element keys
@@ -217,7 +229,7 @@ function parseLatestPatch(html) {
 }
 async function latestPatch(signal) {
     const html = await fetchText('https://lolalytics.com/lol/tierlist/', signal);
-    return parseLatestPatch(html);
+    return html === FAILED ? null : parseLatestPatch(html);
 }
 
-module.exports = { parseQwikJson, buildDataset, scrapeDataset, getChampionList, urlName, parseLatestPatch, latestPatch };
+module.exports = { parseQwikJson, buildDataset, scrapeDataset, getChampionList, urlName, parseLatestPatch, latestPatch, _timing: timing };

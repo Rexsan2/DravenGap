@@ -40,16 +40,27 @@
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const wpa = v => (v == null ? '–' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}`);
     const pp = v => (v == null ? '–' : `<span class="${DD.ppClass ? DD.ppClass(v) : ''}">${v > 0.995 ? '>99%' : v < 0.005 ? '<1%' : Math.round(v * 100) + '%'}</span>`);
-    const cache = new Map();   // "champ|role" -> { loading } | { result, acct, games, champGames } | { error }
+    const cache = new Map();   // "champ|role|period" -> { loading } | { result, acct, games, champGames } | { error }
     let summaryCache = new Map(); // champ -> profile:champ-summary promise (one per session view)
+    // The Coachless tables follow the Time Period (per patch, Emerald+: the Rank does not change them), so the period is part of the
+    // cache key: a change made anywhere is picked up the next time a card is drawn.
+    const keyOf = (champ, role) => { const tp = document.getElementById('time-period-select'); return `${champ}|${role}|${(tp && tp.value) || 'patch'}`; };
 
+    // "Which account is mine?" is answered once, in the main process (profile:owner: the client's account, else the last one seen,
+    // else Settings > Default account), like the champion page and the Duo tab, so the card also shows with the client closed.
     async function ownerAccount() {
+        let fb = null;
+        try { const s = await window.electronAPI.getSettings(); if (s && s.profileAccount && s.profileAccount.gameName && s.profileAccount.tagLine) fb = { gameName: s.profileAccount.gameName, tagLine: s.profileAccount.tagLine, platform: s.profileAccount.platform || 'EUW1' }; } catch (e) { /* none */ }
+        try {
+            const r = await api.invoke('profile:owner', fb ? { fallback: fb } : {});
+            if (r && r.ok && r.owner) return { gameName: r.owner.gameName, tagLine: r.owner.tagLine, platform: r.owner.platform, puuid: r.owner.puuid || undefined };
+        } catch (e) { /* the main process could not answer: the client's account, else the setting */ }
         try { const r = await api.invoke('profile:me'); if (r && r.ok && r.me && r.me.platform) return { gameName: r.me.gameName, tagLine: r.me.tagLine, platform: r.me.platform }; } catch (e) { /* client down */ }
-        try { const s = await window.electronAPI.getSettings(); if (s && s.profileAccount && s.profileAccount.gameName) return s.profileAccount; } catch (e) { /* none */ }
-        return null;
+        return fb;
     }
-    async function load(champ, role) {
-        const key = `${champ}|${role}`;
+    async function load(champ, role, key) {
+        // entries of the same champion and role for another period are not needed any more
+        for (const k of [...cache.keys()]) if (k !== key && k.startsWith(`${champ}|${role}|`) && !cache.get(k).loading) cache.delete(k);
         cache.set(key, { loading: true });
         try {
             const c = (DD.getChampions() || []).find(x => x.id === champ);
@@ -59,15 +70,15 @@
             const [mine, tables] = await Promise.all([summaryCache.get(champ), DD.buildsTables ? DD.buildsTables(champ, role) : null]);
             if (!mine || !mine.ok) { cache.set(key, { error: (mine && mine.error) || 'unavailable' }); return; }
             if (!tables || !tables.saved) { cache.set(key, { error: 'no-builds' }); return; }
-            cache.set(key, { result: computeCoaching(mine, tables, role), acct, champGames: mine.games, patches: tables.patches });
+            cache.set(key, { result: computeCoaching(mine, tables, role), acct, champGames: mine.games, patches: tables.patches, missing: tables.missing });
         } catch (e) { cache.set(key, { error: e.message }); }
         finally { window.dispatchEvent(new CustomEvent('coach-updated', { detail: { champ, role } })); }
     }
     // the card for the Builds view / hub; '' until loaded (then 'coach-updated' asks the caller to repaint)
     function html(champ, role) {
         if (!champ || !role || !api) return '';
-        const key = `${champ}|${role}`, e = cache.get(key);
-        if (!e) { load(champ, role); return ''; }
+        const key = keyOf(champ, role), e = cache.get(key);
+        if (!e) { load(champ, role, key); return ''; }
         if (e.loading || e.error) return '';          // nothing to coach (no account, no builds, Profile unavailable): stay quiet
         const r = e.result, name = (DD.getChampions() || []).find(x => x.id === champ);
         const cname = esc(name ? name.name : champ), roleName = { TOP: 'Top', JUNGLE: 'Jungle', MIDDLE: 'Mid', BOTTOM: 'Bot', SUPPORT: 'Support' }[role] || role;
@@ -80,7 +91,10 @@
             <div class="coach-you">${icon(x.item)}<b>${esc(x.item.name)}</b> <span class="coach-m">you: ${Math.round(x.share * 100)}% of games</span> · WPA <b class="${x.item.wpa >= 0 ? 'delta-pos' : 'delta-neg'}">${wpa(x.item.adj != null ? x.item.adj : x.item.wpa)}</b> · PP ${pp(x.item.pp)}</div>
             ${x.alt ? `<div class="coach-alt">→ ${icon(x.alt)}<b>${esc(x.alt.name)}</b>: WPA <b class="delta-pos">${wpa(x.alt.adj != null ? x.alt.adj : x.alt.wpa)}</b> · PP ${pp(x.alt.pp)} <span class="coach-m">(${Math.round(x.alt.buys).toLocaleString()} buys, ${Math.round((x.alt.pickRate || 0) * 1000) / 10}% of ${x.kind === 'boots' ? 'boots' : 'legendary'} purchases)</span></div>`
                 : x.warn ? `<div class="coach-alt coach-m">Its WPA is very likely negative for ${cname} ${roleName}.</div>` : `<div class="coach-alt coach-m">In line with the data: nothing clearly better.</div>`}</div>`).join('');
-        return `<div class="coach">${head}${rows}<div class="coach-m coach-foot">WPA adjusted for sample size, all item slots, patch${(e.patches || []).length > 1 ? 'es' : ''} ${esc((e.patches || []).join(' + '))}. A swap is suggested only with PP ≥ 90% and +0.5 WPA or more.</div></div>`;
+        // "patches 16.17–16.20 · 16.19 missing": one range for the period, plus the patches with no saved data for this champion
+        const L = DD.patchLabels, list = e.patches || [];
+        const span = (L && L.range ? L.range(list) : list.join(', ')) + (L && L.missingNote && Array.isArray(e.missing) ? L.missingNote(e.missing) : '');
+        return `<div class="coach">${head}${rows}<div class="coach-m coach-foot">WPA adjusted for sample size, all item slots, patch${list.length > 1 ? 'es' : ''} ${esc(span)}. A swap is suggested only with PP ≥ 90% and +0.5 WPA or more.</div></div>`;
     }
     window.addEventListener('builds-updated', () => { for (const k of [...cache.keys()]) if (!cache.get(k).loading) cache.delete(k); });
     // new games saved in Profile (after a game, or a backfill): read them again next time

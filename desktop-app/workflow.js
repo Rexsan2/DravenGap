@@ -429,7 +429,7 @@
             if (k === 'lobby') DD.showView('tierlist');
             else if (k === 'select') { if (!DD.selectMyLane || !DD.selectMyLane()) DD.showView('draft'); }
             else if (k === 'game' && window.DDProfile) window.DDProfile.openFromOutside(null, 'live');
-            else if (k === 'review' && window.DDProfile) window.DDProfile.openFromOutside(null, 'summary');
+            else if (k === 'review' && window.DDProfile) window.DDProfile.openOwner('summary');   // YOUR last game, whoever's profile is on screen
             return;
         }
         runAction(b.dataset.fbAct);
@@ -455,7 +455,7 @@
         else if (k === 'matchup' && c.pick && c.opp && DD.openMatchup) DD.openMatchup(c.pick, c.lane, c.opp);
         else if (k === 'live' && window.DDProfile) window.DDProfile.openFromOutside(null, 'live');
         else if (k === 'mini' && DD.mini) DD.mini.toggle().then(paint);
-        else if (k === 'review' && window.DDProfile) window.DDProfile.openFromOutside(null, 'summary');
+        else if (k === 'review' && window.DDProfile) window.DDProfile.openOwner('summary');   // YOUR last game, whoever's profile is on screen
         else if (k === 'aram' || k === 'arena') DD.showView(k);
     }
     document.addEventListener('mousedown', e => { if (F.moreOpen && !moreEl.contains(e.target) && !e.target.closest('[data-fb="more"]')) { F.moreOpen = false; paintMore(); } });
@@ -498,7 +498,9 @@
             onPhase(ev.next);
         });
         api.on('profile:update', ev => { if (ev && ev.kind === 'lp') loadSession(); });
-        api.invoke('profile:me').then(r => { if (r && r.ok) { F.lcu = !!r.lcu; if (r.phase) onPhase(r.phase); else paint(); } }).catch(() => paint());
+        // the phase at start-up, with its queue: started during an ARAM / Arena champion select, the bar shows that mode's action
+        // even when the poller's first profile:phase push came before this window listened
+        api.invoke('profile:me').then(r => { if (r && r.ok) { F.lcu = !!r.lcu; if (r.queueId != null) F.queueId = r.queueId; if (r.phase) onPhase(r.phase); else paint(); } }).catch(() => paint());
     }
     // settings: automatic send on lock-in
     const autoToggle = document.getElementById('auto-send-toggle');

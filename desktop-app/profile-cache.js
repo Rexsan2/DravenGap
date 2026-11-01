@@ -1,7 +1,8 @@
 // desktop-app/profile-cache.js
 // Disk caches for the Profile view under <userData>/profile-cache:
 //   matches/<matchId>.json.gz   permanent (matches are immutable)
-//   meta.json                   TTL cache (account / summoner / league / mastery / queues)
+//   meta.json                   TTL cache (account / summoner / league / mastery / queues / op.gg); profile-main.js pruneMeta drops
+//                               old entries about other players at start-up and daily
 //   players/<puuid>.json        per-player ledger of compact match rows (season stats) + match-id index
 const fs = require('fs');
 const path = require('path');

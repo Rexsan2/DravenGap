@@ -15,6 +15,7 @@ const srv = https.createServer({ key: fs.readFileSync(path.join(__dirname, '..',
         if (req.headers.authorization !== 'Basic ' + Buffer.from('riot:pw').toString('base64')) return send(401, { message: 'auth' });
         if (req.url === '/lol-perks/v1/pages' && req.method === 'GET') return send(200, state.pages);
         if (req.url === '/lol-perks/v1/pages' && req.method === 'POST') {
+            if (state.rejectPerks) return send(400, { message: 'Invalid perk id 9999' });
             if (state.pages.filter(p => p.isEditable).length >= state.maxPages) return send(400, { message: 'Max pages reached' });
             const p = Object.assign({}, j, { id: state.nextId++, isEditable: true, isDeletable: true });
             state.pages.forEach(x => { x.current = false; });
@@ -74,6 +75,20 @@ srv.listen(0, '127.0.0.1', async () => {
         assert(r.ok && r.action === 'updated', JSON.stringify(r));
         assert(state.pages.find(p => p.id === 1).name.startsWith('DravenGap'));
         assert.strictEqual(state.pages.find(p => p.id === 3).name, 'B');
+
+        // a refusal that is not "no free page" (a rune the client rejects) is reported as it is, without the Replace offer
+        state.pages = [{ id: 1, name: 'A', isEditable: true, current: true }];
+        state.rejectPerks = true;
+        r = await call('lcu:apply-runes', { page, name: 'Ahri Mid' });
+        assert(!r.ok && r.code !== 'PAGES_FULL' && /Creating the rune page failed \(400: Invalid perk/.test(r.error), JSON.stringify(r));
+        state.rejectPerks = false;
+        // every slot used and one of Riot's preset pages is current: "Replace current page" says so instead of PAGES_FULL again
+        state.pages = [{ id: 1, name: 'A', isEditable: true, current: false }, { id: 3, name: 'B', isEditable: true, current: false }, { id: 50, name: 'Preset', isEditable: false, current: true }];
+        r = await call('lcu:apply-runes', { page, name: 'Ahri Mid', replaceCurrent: true });
+        assert(!r.ok && r.code === 'CURRENT_PRESET' && /preset/.test(r.error), JSON.stringify(r));
+        assert.deepStrictEqual(state.pages.map(p => p.name), ['A', 'B', 'Preset'], 'nothing changed');
+        r = await call('lcu:apply-runes', { page, name: 'Ahri Mid' });
+        assert(!r.ok && r.code === 'PAGES_FULL', 'without replaceCurrent, full slots are still PAGES_FULL: ' + JSON.stringify(r));
 
         // spells: Flash stays on F where the player has it
         r = await call('lcu:apply-spells', { spell1Id: 4, spell2Id: 12 });
